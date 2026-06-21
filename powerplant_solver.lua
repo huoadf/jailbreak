@@ -1343,6 +1343,7 @@ if Rayfield then
         LoadingTitle = "Power Plant Solver",
         LoadingSubtitle = "Matcha Auto-Solver",
         Theme = "Default",
+        ToggleUIKeybind = VK_MAP[toggleKey] or VK_MAP["RightControl"],
         ConfigurationSaving = {
             Enabled = true,
             FolderName = "MatchaConfigs",
@@ -1350,22 +1351,12 @@ if Rayfield then
         }
     })
     
-    local uiToggleConn = nil
-    local uiTogglePollThread = nil
+    -- The library's own render loop handles the toggle natively via ck(State.ToggleKey).
+    -- We only need to sync the chosen key into State.ToggleKey — no second polling loop needed.
     local uiToggleVK = VK_MAP["RightControl"] -- default VK code
-    
+
     local function updateUIToggleKeybind(newKey)
-        -- Kill old poll thread if running
-        if uiTogglePollThread then
-            pcall(function() task.cancel(uiTogglePollThread) end)
-            uiTogglePollThread = nil
-        end
-        if uiToggleConn then
-            uiToggleConn:Disconnect()
-            uiToggleConn = nil
-        end
-        
-        -- Safely convert newKey to string name (e.g. "RightControl")
+        -- Safely convert to string name (e.g. "RightControl")
         local keyStr = tostring(newKey)
         pcall(function()
             if typeof(newKey) == "EnumItem" or type(newKey) == "table" or type(newKey) == "userdata" then
@@ -1375,89 +1366,32 @@ if Rayfield then
         if keyStr:find("%.") then
             keyStr = keyStr:match("([^.]+)$") or keyStr
         end
-        
+
         toggleKey = keyStr
         _G.UIToggleKey = keyStr
-        
-        -- Resolve to VK code
+
+        -- Resolve to VK code and push it into the library
         local vk = VK_MAP[keyStr]
         if vk then
             uiToggleVK = vk
         end
-        
-        -- Sync the key directly into the library's State.ToggleKey
-        -- This makes the library's built-in render-loop toggle also respond to the new key
+
+        -- Primary: SetToggleKey method
         pcall(function()
             if _G.Rayfield and _G.Rayfield.SetToggleKey then
                 _G.Rayfield:SetToggleKey(uiToggleVK)
             end
         end)
-        -- Direct State access as fallback (library exposes _G.__Rayfield)
+        -- Fallback: write directly into exposed State table
         pcall(function()
             if _G.__RayfieldState then
                 _G.__RayfieldState.ToggleKey = uiToggleVK
             end
         end)
-        
-        print("[PowerPlantSolver] UI Toggle Hotkey updated to: " .. tostring(keyStr) .. " (VK: " .. tostring(uiToggleVK) .. ")")
-        
-        -- Poll iskeypressed in a loop — same mechanism the library uses internally
-        -- This is reliable in Matcha where UserInputService.InputBegan may not fire
-        if iskeypressed then
-            uiTogglePollThread = task.spawn(function()
-                local wasDown = false
-                while currentSolver.Running do
-                    local ok, down = pcall(iskeypressed, uiToggleVK)
-                    local pressed = ok and down or false
-                    
-                    if pressed and not wasDown then
-                        -- Key just pressed — toggle UI
-                        pcall(function()
-                            if _G.Rayfield and _G.Rayfield.ToggleVisibility then
-                                _G.Rayfield:ToggleVisibility()
-                            elseif _G.Rayfield and _G.Rayfield.SetVisibility and _G.Rayfield.IsVisible then
-                                _G.Rayfield:SetVisibility(not _G.Rayfield:IsVisible())
-                            end
-                        end)
-                    end
-                    wasDown = pressed
-                    task.wait(0.05) -- 20hz poll, low overhead
-                end
-            end)
-        else
-            -- Fallback: UserInputService (works in standard Roblox executors)
-            if UserInputService and UserInputService.InputBegan then
-                pcall(function()
-                    uiToggleConn = UserInputService.InputBegan:Connect(function(input, processed)
-                        if processed then return end
-                        
-                        local inputKeyName = ""
-                        pcall(function()
-                            if input.KeyCode then
-                                inputKeyName = input.KeyCode.Name or ""
-                                if inputKeyName == "" then
-                                    local str = tostring(input.KeyCode)
-                                    inputKeyName = str:match("([^.]+)$") or str
-                                end
-                            end
-                        end)
-                        
-                        if inputKeyName == toggleKey then
-                            pcall(function()
-                                if _G.Rayfield and _G.Rayfield.ToggleVisibility then
-                                    _G.Rayfield:ToggleVisibility()
-                                elseif _G.Rayfield and _G.Rayfield.SetVisibility and _G.Rayfield.IsVisible then
-                                    _G.Rayfield:SetVisibility(not _G.Rayfield:IsVisible())
-                                end
-                            end)
-                        end
-                    end)
-                    trackConnection(uiToggleConn)
-                end)
-            end
-        end
+
+        print("[PowerPlantSolver] UI Toggle key -> " .. keyStr .. " (VK 0x" .. string.format("%X", uiToggleVK) .. ")")
     end
-    
+
     updateUIToggleKeybind(toggleKey)
 
     
