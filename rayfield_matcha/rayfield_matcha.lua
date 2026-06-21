@@ -1308,57 +1308,65 @@ function clamp(v, lo, hi)
 end
 
 -- Global input captures
-UserInputService.InputChanged:Connect(function(input, gp)
-	if input.UserInputType == Enum.UserInputType.MouseWheel then
-		local activeTabObj = Tabs[State.ActiveTab]
-		if activeTabObj then
-			local contentX = State.Win.x + 140 + 10
-			local contentY = State.Win.y + 40 + 10
-			local contentW = State.Win.w - 140 - 20
-			local contentH = State.Win.h - 40 - 20
-			
-			if inBounds(contentX, contentY, contentW, contentH) then
-				local totalHeight = 0
-				local spacing = 8
-				for _, el in ipairs(activeTabObj.elements) do
-					totalHeight = totalHeight + getElementHeight(el) + spacing
+if UserInputService and UserInputService.InputChanged then
+	pcall(function()
+		UserInputService.InputChanged:Connect(function(input, gp)
+			if input.UserInputType == Enum.UserInputType.MouseWheel then
+				local activeTabObj = Tabs[State.ActiveTab]
+				if activeTabObj then
+					local contentX = State.Win.x + 140 + 10
+					local contentY = State.Win.y + 40 + 10
+					local contentW = State.Win.w - 140 - 20
+					local contentH = State.Win.h - 40 - 20
+					
+					if inBounds(contentX, contentY, contentW, contentH) then
+						local totalHeight = 0
+						local spacing = 8
+						for _, el in ipairs(activeTabObj.elements) do
+							totalHeight = totalHeight + getElementHeight(el) + spacing
+						end
+						if totalHeight > 0 then totalHeight = totalHeight - spacing end
+						local maxScroll = math.max(0, totalHeight - contentH)
+						
+						local delta = input.Position.Z
+						activeTabObj.scrollOffset = clamp(activeTabObj.scrollOffset - delta * 24, 0, maxScroll)
+					end
 				end
-				if totalHeight > 0 then totalHeight = totalHeight - spacing end
-				local maxScroll = math.max(0, totalHeight - contentH)
-				
-				local delta = input.Position.Z
-				activeTabObj.scrollOffset = clamp(activeTabObj.scrollOffset - delta * 24, 0, maxScroll)
 			end
-		end
-	end
-end)
+		end)
+	end)
+end
 
-UserInputService.InputBegan:Connect(function(input, gp)
-	if not FocusedInput then return end
-	if input.UserInputType == Enum.UserInputType.Keyboard then
-		local kc = input.KeyCode
-		if kc == Enum.KeyCode.Return then
-			FocusedInput.callback(FocusedInput.value)
-			FocusedInput = nil
-		elseif kc == Enum.KeyCode.Backspace then
-			FocusedInput.value = string.sub(FocusedInput.value, 1, -2)
-			task.spawn(FocusedInput.callback, FocusedInput.value)
-		elseif kc == Enum.KeyCode.Space then
-			FocusedInput.value = FocusedInput.value .. " "
-			task.spawn(FocusedInput.callback, FocusedInput.value)
-		else
-			local char = KeyMap[kc]
-			if char then
-				local shift = iskeypressed(0x10) or iskeypressed(0xA0) or iskeypressed(0xA1)
-				if shift then
-					char = ShiftMap[char] or char
+if UserInputService and UserInputService.InputBegan then
+	pcall(function()
+		UserInputService.InputBegan:Connect(function(input, gp)
+			if not FocusedInput then return end
+			if input.UserInputType == Enum.UserInputType.Keyboard then
+				local kc = input.KeyCode
+				if kc == Enum.KeyCode.Return then
+					FocusedInput.callback(FocusedInput.value)
+					FocusedInput = nil
+				elseif kc == Enum.KeyCode.Backspace then
+					FocusedInput.value = string.sub(FocusedInput.value, 1, -2)
+					task.spawn(FocusedInput.callback, FocusedInput.value)
+				elseif kc == Enum.KeyCode.Space then
+					FocusedInput.value = FocusedInput.value .. " "
+					task.spawn(FocusedInput.callback, FocusedInput.value)
+				else
+					local char = KeyMap[kc]
+					if char then
+						local shift = iskeypressed(0x10) or iskeypressed(0xA0) or iskeypressed(0xA1)
+						if shift then
+							char = ShiftMap[char] or char
+						end
+						FocusedInput.value = FocusedInput.value .. char
+						task.spawn(FocusedInput.callback, FocusedInput.value)
+					end
 				end
-				FocusedInput.value = FocusedInput.value .. char
-				task.spawn(FocusedInput.callback, FocusedInput.value)
 			end
-		end
-	end
-end)
+		end)
+	end)
+end
 
 -- The core frame-by-frame loop step
 local function step()
