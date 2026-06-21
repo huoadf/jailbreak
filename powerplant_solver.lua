@@ -784,7 +784,8 @@ local function drawDebugPath(paths, grid, pairsList)
     for _, p in ipairs(pairsList) do
         local path = paths[p.id]
         if path and #path > 1 then
-            local color = Color3.fromHSV((p.guiId * 0.17) % 1, 0.8, 1)
+            -- Use the actual tile color; fall back to HSV if not captured
+            local color = p.color or Color3.fromHSV((p.guiId * 0.17) % 1, 0.8, 1)
             local coords = {}
             for _, step in ipairs(path) do
                 local label = grid[step.r][step.c]
@@ -862,7 +863,10 @@ local function solveActiveGuiPuzzle(gui, innerFrame, flowTable)
             if num then
                 local p = pairMap[num]
                 if not p then
-                    p = {guiId = num, id = nextInternalId, startPos = {r = r, c = c}}
+                    -- Read the actual tile color directly from the TextLabel
+                    local tileColor = Color3.fromRGB(255, 255, 255)
+                    pcall(function() tileColor = label.BackgroundColor3 end)
+                    p = {guiId = num, id = nextInternalId, startPos = {r = r, c = c}, color = tileColor}
                     nextInternalId = nextInternalId + 1
                     pairMap[num] = p
                     table.insert(pairsList, p)
