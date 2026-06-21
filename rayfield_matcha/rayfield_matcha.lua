@@ -915,7 +915,7 @@ local function processEl(el, idp, x, y, w, h, dt, z, block)
 		text(idp .. ".dc", "v", bx + boxW - 14, by + 5, 11, Color3.fromRGB(150, 150, 150), z + 3)
 		
 		if bHover and Input.clicked then
-			State.Overlay = { kind = "dropdown", el = el, x = bx, y = by + boxH + 4, w = boxW }
+			State.Overlay = { kind = "dropdown", el = el, x = bx, y = by + boxH + 4, w = boxW, openedFrame = CurTick }
 		end
 		
 	-- 10. Keybind widget
@@ -950,7 +950,7 @@ local function processEl(el, idp, x, y, w, h, dt, z, block)
 		
 		if bHover and Input.clicked then
 			State.Overlay = { kind = "colorpicker", el = el, ax = bx + sw, ay = by + swh + 4,
-				origH = el.h, origS = el.s, origV = el.v }
+				origH = el.h, origS = el.s, origV = el.v, openedFrame = CurTick }
 		end
 	end
 end
@@ -959,7 +959,7 @@ end
 local function renderOverlay(dt)
 	local ov = State.Overlay
 	if not ov then return false end
-	local Z = 120
+	local Z = 10000
 	
 	if ov.kind == "dropdown" then
 		local el = ov.el
@@ -970,8 +970,24 @@ local function renderOverlay(dt)
 		local needBar = #opts > visN
 		local barW = needBar and 6 or 0
 		local listH = visN * rowH
-		local panelW = ov.w
+		
+		-- Dynamically calculate the maximum width based on option texts to prevent text overflow
+		local maxOptW = ov.w
+		for _, opt in ipairs(opts) do
+			local ow = textW(tostring(opt), 12) + 24
+			if ow > maxOptW then
+				maxOptW = ow
+			end
+		end
+		local panelW = maxOptW
 		local panelH = pad * 2 + listH
+		
+		-- Align to the right edge of the dropdown box if the options panel is wider
+		local panelX = ov.x
+		if panelW > ov.w then
+			panelX = (ov.x + ov.w) - panelW
+		end
+		
 		local maxScroll = math.max(0, #opts - visN)
 		el.scroll = clamp(el.scroll or 0, 0, maxScroll)
 		
@@ -984,24 +1000,24 @@ local function renderOverlay(dt)
 			return true
 		end
 		
-		rect("ov.bg", ov.x, ov.y, panelW, panelH, Theme.Topbar, a * 0.98, Z, 5)
-		outline("ov.bd", ov.x, ov.y, panelW, panelH, Theme.ElementStroke, a * 0.5, Z + 1, 5)
+		rect("ov.bg", panelX, ov.y, panelW, panelH, Theme.Topbar, a * 0.98, Z, 5)
+		outline("ov.bd", panelX, ov.y, panelW, panelH, Theme.ElementStroke, a * 0.5, Z + 1, 5)
 		
 		local listTop = ov.y + pad
 		for i = 1, visN do
 			local opt = opts[i + el.scroll]
 			if opt then
 				local ry = listTop + (i - 1) * rowH
-				local rHover = inBounds(ov.x, ry, panelW - barW, rowH) and not ov.closing
+				local rHover = inBounds(panelX, ry, panelW - barW, rowH) and not ov.closing
 				local selected = el.multi and el.selectedMap[opt] or (not el.multi and el.value == opt)
 				
 				if selected then
-					rect("ov.r" .. i, ov.x + 2, ry, panelW - 4 - barW, rowH - 2, Theme.DropdownSelected, a, Z + 2, 4)
+					rect("ov.r" .. i, panelX + 2, ry, panelW - 4 - barW, rowH - 2, Theme.DropdownSelected, a, Z + 2, 4)
 				elseif rHover then
-					rect("ov.r" .. i, ov.x + 2, ry, panelW - 4 - barW, rowH - 2, Theme.ElementBackgroundHover, a * 0.3, Z + 2, 4)
+					rect("ov.r" .. i, panelX + 2, ry, panelW - 4 - barW, rowH - 2, Theme.ElementBackgroundHover, a * 0.3, Z + 2, 4)
 				end
 				
-				text("ov.t" .. i, tostring(opt), ov.x + 10, ry + 6, 12, selected and Theme.SliderStroke or Theme.TextColor, Z + 3, false, a)
+				text("ov.t" .. i, tostring(opt), panelX + 10, ry + 6, 12, selected and Theme.SliderStroke or Theme.TextColor, Z + 3, false, a)
 				
 				if rHover and Input.clicked then
 					if el.multi then
@@ -1019,7 +1035,7 @@ local function renderOverlay(dt)
 		end
 		
 		if needBar then
-			local trackX = ov.x + panelW - barW
+			local trackX = panelX + panelW - barW
 			local thumbH = math.max(16, listH * visN / #opts)
 			local thumbY = listTop + (el.scroll / maxScroll) * (listH - thumbH)
 			rect("ov.sbtk", trackX, listTop, barW, listH, Theme.Background, a * 0.5, Z + 2, 2)
@@ -1034,7 +1050,7 @@ local function renderOverlay(dt)
 			end
 		end
 		
-		if Input.clicked and not ov.closing and not inBounds(ov.x, ov.y, panelW, panelH) then
+		if Input.clicked and not ov.closing and ov.openedFrame ~= CurTick and not inBounds(panelX, ov.y, panelW, panelH) then
 			ov.closing = true
 		end
 		return true
@@ -1110,7 +1126,7 @@ local function renderOverlay(dt)
 			return true
 		end
 		
-		if Input.clicked and not ov.drag and not inBounds(px, py, panelW, panelH) then
+		if Input.clicked and not ov.drag and ov.openedFrame ~= CurTick and not inBounds(px, py, panelW, panelH) then
 			State.Overlay = nil
 		end
 		return true
