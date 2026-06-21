@@ -1094,13 +1094,37 @@ if Rayfield then
         LoadingTitle = "Power Plant Solver",
         LoadingSubtitle = "Matcha Auto-Solver",
         Theme = "Default",
-        ToggleUIKeybind = toggleKey, -- Keybind to hide/show UI
         ConfigurationSaving = {
             Enabled = true,
             FolderName = "MatchaConfigs",
             FileName = "PowerPlantSolver"
         }
     })
+    
+    local uiToggleConn = nil
+    local function updateUIToggleKeybind(newKey)
+        if uiToggleConn then
+            uiToggleConn:Disconnect()
+            uiToggleConn = nil
+        end
+        toggleKey = newKey
+        _G.UIToggleKey = newKey
+        
+        uiToggleConn = UserInputService.InputBegan:Connect(function(input, processed)
+            if processed then return end
+            local keycode = nil
+            pcall(function()
+                keycode = Enum.KeyCode[toggleKey]
+            end)
+            if keycode and input.KeyCode == keycode then
+                local isVisible = Rayfield:IsVisible()
+                Rayfield:SetVisibility(not isVisible)
+            end
+        end)
+        trackConnection(uiToggleConn)
+    end
+    
+    updateUIToggleKeybind(toggleKey)
     
     local MainTab = Window:CreateTab("Solver Settings", "sliders-horizontal")
     
@@ -1141,6 +1165,15 @@ if Rayfield then
                     print("[PowerPlantSolver] Solve Keybind changed to VK code: " .. string.format("0x%X", vkCode))
                 end
             end)
+        end
+    })
+    
+    MainTab:CreateKeybind({
+        Name = "UI Toggle Hotkey",
+        CurrentKeybind = _G.UIToggleKey or "RightControl",
+        Flag = "UIToggleHotkey",
+        Callback = function(key)
+            updateUIToggleKeybind(key)
         end
     })
     
