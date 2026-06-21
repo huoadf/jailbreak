@@ -437,22 +437,34 @@ local function keyEdge(vk)
 end
 
 -- Alphanumeric / Symbols keycode map for inputs
-local KeyMap = {
-	[Enum.KeyCode.A] = "a", [Enum.KeyCode.B] = "b", [Enum.KeyCode.C] = "c", [Enum.KeyCode.D] = "d",
-	[Enum.KeyCode.E] = "e", [Enum.KeyCode.F] = "f", [Enum.KeyCode.G] = "g", [Enum.KeyCode.H] = "h",
-	[Enum.KeyCode.I] = "i", [Enum.KeyCode.J] = "j", [Enum.KeyCode.K] = "k", [Enum.KeyCode.L] = "l",
-	[Enum.KeyCode.M] = "m", [Enum.KeyCode.N] = "n", [Enum.KeyCode.O] = "o", [Enum.KeyCode.P] = "p",
-	[Enum.KeyCode.Q] = "q", [Enum.KeyCode.R] = "r", [Enum.KeyCode.S] = "s", [Enum.KeyCode.T] = "t",
-	[Enum.KeyCode.U] = "u", [Enum.KeyCode.V] = "v", [Enum.KeyCode.W] = "w", [Enum.KeyCode.X] = "x",
-	[Enum.KeyCode.Y] = "y", [Enum.KeyCode.Z] = "z",
-	[Enum.KeyCode.Zero] = "0", [Enum.KeyCode.One] = "1", [Enum.KeyCode.Two] = "2", [Enum.KeyCode.Three] = "3",
-	[Enum.KeyCode.Four] = "4", [Enum.KeyCode.Five] = "5", [Enum.KeyCode.Six] = "6", [Enum.KeyCode.Seven] = "7",
-	[Enum.KeyCode.Eight] = "8", [Enum.KeyCode.Nine] = "9",
-	[Enum.KeyCode.Minus] = "-", [Enum.KeyCode.Equals] = "=", [Enum.KeyCode.LeftBracket] = "[",
-	[Enum.KeyCode.RightBracket] = "]", [Enum.KeyCode.Semicolon] = ";", [Enum.KeyCode.Quote] = "'",
-	[Enum.KeyCode.Comma] = ",", [Enum.KeyCode.Period] = ".", [Enum.KeyCode.Slash] = "/",
-	[Enum.KeyCode.BackSlash] = "\\",
-}
+local KeyMap = {}
+pcall(function()
+	local function addKey(enumItem, char)
+		if enumItem ~= nil then
+			KeyMap[enumItem] = char
+		end
+	end
+	
+	-- Letters
+	addKey(Enum.KeyCode.A, "a") addKey(Enum.KeyCode.B, "b") addKey(Enum.KeyCode.C, "c") addKey(Enum.KeyCode.D, "d")
+	addKey(Enum.KeyCode.E, "e") addKey(Enum.KeyCode.F, "f") addKey(Enum.KeyCode.G, "g") addKey(Enum.KeyCode.H, "h")
+	addKey(Enum.KeyCode.I, "i") addKey(Enum.KeyCode.J, "j") addKey(Enum.KeyCode.K, "k") addKey(Enum.KeyCode.L, "l")
+	addKey(Enum.KeyCode.M, "m") addKey(Enum.KeyCode.N, "n") addKey(Enum.KeyCode.O, "o") addKey(Enum.KeyCode.P, "p")
+	addKey(Enum.KeyCode.Q, "q") addKey(Enum.KeyCode.R, "r") addKey(Enum.KeyCode.S, "s") addKey(Enum.KeyCode.T, "t")
+	addKey(Enum.KeyCode.U, "u") addKey(Enum.KeyCode.V, "v") addKey(Enum.KeyCode.W, "w") addKey(Enum.KeyCode.X, "x")
+	addKey(Enum.KeyCode.Y, "y") addKey(Enum.KeyCode.Z, "z")
+	
+	-- Numbers
+	addKey(Enum.KeyCode.Zero, "0") addKey(Enum.KeyCode.One, "1") addKey(Enum.KeyCode.Two, "2") addKey(Enum.KeyCode.Three, "3")
+	addKey(Enum.KeyCode.Four, "4") addKey(Enum.KeyCode.Five, "5") addKey(Enum.KeyCode.Six, "6") addKey(Enum.KeyCode.Seven, "7")
+	addKey(Enum.KeyCode.Eight, "8") addKey(Enum.KeyCode.Nine, "9")
+	
+	-- Special characters
+	addKey(Enum.KeyCode.Minus, "-") addKey(Enum.KeyCode.Equals, "=") addKey(Enum.KeyCode.LeftBracket, "[")
+	addKey(Enum.KeyCode.RightBracket, "]") addKey(Enum.KeyCode.Semicolon, ";") addKey(Enum.KeyCode.Quote, "'")
+	addKey(Enum.KeyCode.Comma, ",") addKey(Enum.KeyCode.Period, ".") addKey(Enum.KeyCode.Slash, "/")
+	addKey(Enum.KeyCode.BackSlash, "\\")
+end)
 
 local ShiftMap = {
 	["a"] = "A", ["b"] = "B", ["c"] = "C", ["d"] = "D", ["e"] = "E", ["f"] = "F", ["g"] = "G", ["h"] = "H",
