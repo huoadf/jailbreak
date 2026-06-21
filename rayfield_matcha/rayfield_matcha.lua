@@ -595,6 +595,32 @@ local function safe(fn, ...)
 	end
 end
 
+-- Visibility toggle API (for external callers like powerplant_solver)
+function Library:SetVisibility(visible)
+	State.Minimized = not visible
+	if visible then
+		-- Clear overlay/dialog when showing
+		State.Overlay = nil
+	end
+end
+
+function Library:IsVisible()
+	return not State.Minimized
+end
+
+function Library:ToggleVisibility()
+	State.Minimized = not State.Minimized
+	if not State.Minimized then
+		State.Overlay = nil
+	end
+end
+
+function Library:SetToggleKey(vkCode)
+	if type(vkCode) == "number" then
+		State.ToggleKey = vkCode
+	end
+end
+
 -- Notification Manager
 function Library:Notify(cfg)
 	cfg = cfg or {}
@@ -1474,6 +1500,7 @@ function Library:CreateWindow(Settings)
 		pcall(function() _G.__Rayfield:Destroy() end)
 	end
 	_G.__Rayfield = Library
+	_G.__RayfieldState = State -- expose State so external scripts can sync ToggleKey
 
 	Settings = Settings or {}
 	Loader.Title = Settings.Name or "Rayfield"
