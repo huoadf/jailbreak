@@ -643,9 +643,13 @@ local function SaveConfiguration()
 	end
 	
 	pcall(function()
-		local path = ConfigurationFolder .. "/" .. CFileName .. ConfigurationExtension
+		local path = ConfigurationFolder .. "/" .. (Library.ConfigFileName or CFileName) .. ConfigurationExtension
 		writefile(path, HttpService:JSONEncode(Data))
 	end)
+end
+
+function Library:SaveConfiguration()
+	SaveConfiguration()
 end
 
 local function LoadConfiguration(jsonStr)
@@ -668,7 +672,7 @@ end
 function Library:LoadConfiguration()
 	if not CEnabled then return end
 	pcall(function()
-		local path = ConfigurationFolder .. "/" .. CFileName .. ConfigurationExtension
+		local path = ConfigurationFolder .. "/" .. (Library.ConfigFileName or CFileName) .. ConfigurationExtension
 		if isfile(path) then
 			local content = readfile(path)
 			if content and content ~= "" then
