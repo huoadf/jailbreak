@@ -434,7 +434,9 @@ end
 
 -- 4. Helper: Extract the number from a grid cell
 local function getCellNumber(label)
-    local text = label.Text
+    if not label then return nil end -- guard against sparse/empty grid cells
+    local text = nil
+    pcall(function() text = label.Text end)
     if text and text ~= "" then
         local num = tonumber(text)
         if num then return num end
@@ -618,10 +620,11 @@ local function dragPath(gui, pathLabels)
         
         local success, err = pcall(function()
             local startPt = coords[1]
+            -- Move to start and hold — wait longer before moving so game registers the press
             safeMouseMoveAbs(startPt.x, startPt.y)
-            task.wait(0.06)
+            task.wait(0.08)
             if matchaPress then matchaPress() else safeMouse1Click() end
-            task.wait(0.06)
+            task.wait(0.12) -- longer hold before moving — critical for the game to latch onto the drag
             
             for i = 2, #coords do
                 local prev = coords[i-1]
@@ -634,17 +637,20 @@ local function dragPath(gui, pathLabels)
                     error("puzzle_closed")
                 end
                 
-                -- Interpolate halfway to make the drag continuous and register 100% reliably
-                local midX = prev.x + (pt.x - prev.x) / 2
-                local midY = prev.y + (pt.y - prev.y) / 2
-                safeMouseMoveAbs(midX, midY)
-                task.wait(_G.SolveDelay / 2)
-                
+                -- Move through two intermediate points for smoother, more reliable registration
+                local t1X = prev.x + (pt.x - prev.x) * 0.33
+                local t1Y = prev.y + (pt.y - prev.y) * 0.33
+                local t2X = prev.x + (pt.x - prev.x) * 0.67
+                local t2Y = prev.y + (pt.y - prev.y) * 0.67
+                safeMouseMoveAbs(t1X, t1Y)
+                task.wait(_G.SolveDelay * 0.25)
+                safeMouseMoveAbs(t2X, t2Y)
+                task.wait(_G.SolveDelay * 0.25)
                 safeMouseMoveAbs(pt.x, pt.y)
-                task.wait(_G.SolveDelay / 2)
+                task.wait(_G.SolveDelay * 0.5)
             end
             
-            task.wait(0.16) -- Wait at final cell to ensure Roblox registers the endpoint position of long paths
+            task.wait(0.18) -- Wait at final cell to ensure Roblox registers the endpoint
             if matchaRelease then
                 matchaRelease()
             end
@@ -652,7 +658,7 @@ local function dragPath(gui, pathLabels)
         if not success then
             warn("[PowerPlantSolver] dragPath OSMouse execution failed: " .. tostring(err))
         end
-        task.wait(0.05)
+        task.wait(0.06)
         
     elseif useVIM then
         local inset = Vector2.new(0, 0)
@@ -917,49 +923,80 @@ local function solveActiveGuiPuzzle(gui, innerFrame, flowTable)
         if path then
             local pathLabels = {}
             for _, step in ipairs(path) do
-                table.insert(pathLabels, grid[step.r][step.c])
+                local lbl = grid[step.r] and grid[step.r][step.c] or nil
+                if lbl then table.insert(pathLabels, lbl) end
             end
             
-            dragPath(gui, pathLabels)
-            task.wait(_G.PathDelay or 0.15)
-            
-            if _G.VerifyDraws then
-                task.wait(0.04) -- brief settle wait for GUI texts
-                if not verifyPath(p, path, flowTable, pathLabels) then
-                    print(string.format("[PowerPlantSolver] Path %d failed verification. Queued for redraw.", p.guiId))
-                    table.insert(missedPaths, { p = p, path = path, labels = pathLabels })
+            if #pathLabels >= 2 then
+                dragPath(gui, pathLabels)
+                task.wait(_G.PathDelay or 0.15)
+                
+                if _G.VerifyDraws then
+                    task.wait(0.08) -- settle wait for GUI state update
+                    if not verifyPath(p, path, flowTable, pathLabels) then
+                        print(string.format("[PowerPlantSolver] Path %d failed verification. Queued for redraw.", p.guiId))
+                        table.insert(missedPaths, { p = p, path = path, labels = pathLabels })
+                    end
                 end
             end
         end
     end
     
-    -- Second Pass: Redraw any missed paths at the end (retry up to 3 times)
+    -- Second Pass: Redraw any missed paths (retry up to 3 times, with a full board reset each attempt)
     if _G.VerifyDraws and #missedPaths > 0 then
         local redrawAttempts = 0
         while #missedPaths > 0 and redrawAttempts < 3 do
+            redrawAttempts = redrawAttempts + 1
+            
+            -- Wait then reset the whole board before redrawing — cleaner than patching individual paths
+            task.wait(0.3)
             local currentGui, _ = findPuzzleGui(true)
             if not currentGui then
-                print("[PowerPlantSolver] Puzzle closed during redraw pass. Aborting.")
+                print("[PowerPlantSolver] Puzzle closed before redraw pass. Aborting.")
                 return false
             end
             
-            redrawAttempts = redrawAttempts + 1
-            task.wait(0.2) -- settle delay before redrawing
+            -- Find and click Reset to wipe the board cleanly
+            local resetBtn = nil
+            pcall(function()
+                resetBtn = currentGui:FindFirstChild("Reset", true)
+                    or currentGui:FindFirstChild("ResetButton", true)
+                    or currentGui:FindFirstChild("reset", true)
+            end)
+            if resetBtn then
+                clickButton(resetBtn)
+                task.wait(0.35) -- wait for board clear animation
+            else
+                task.wait(0.2)
+            end
             
+            -- Redraw ALL paths from scratch (cleaner than partial redraw)
             local stillMissed = {}
-            for _, missed in ipairs(missedPaths) do
+            for _, p2 in ipairs(pairsList) do
                 local currentGuiInner, _ = findPuzzleGui(true)
                 if not currentGuiInner then
-                    print("[PowerPlantSolver] Puzzle closed during redraw pass inner. Aborting.")
+                    print("[PowerPlantSolver] Puzzle closed during redraw pass. Aborting.")
                     return false
                 end
                 
-                print(string.format("[PowerPlantSolver] Redrawing missed path %d (Attempt %d/3)...", missed.p.guiId, redrawAttempts))
-                dragPath(gui, missed.labels)
-                task.wait(_G.PathDelay or 0.15)
-                
-                -- Verify again
-                task.wait(0.05)
+                local path2 = paths[p2.id]
+                if path2 then
+                    local pathLabels2 = {}
+                    for _, step in ipairs(path2) do
+                        local lbl = grid[step.r] and grid[step.r][step.c] or nil
+                        if lbl then table.insert(pathLabels2, lbl) end
+                    end
+                    if #pathLabels2 >= 2 then
+                        print(string.format("[PowerPlantSolver] Redraw attempt %d — path %d...", redrawAttempts, p2.guiId))
+                        dragPath(gui, pathLabels2)
+                        task.wait(_G.PathDelay or 0.15)
+                    end
+                end
+            end
+            
+            -- Re-verify all originally missed paths
+            task.wait(0.1)
+            for _, missed in ipairs(missedPaths) do
                 if not verifyPath(missed.p, missed.path, flowTable, missed.labels) then
                     table.insert(stillMissed, missed)
                 end
