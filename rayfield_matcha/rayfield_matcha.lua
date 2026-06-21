@@ -349,17 +349,30 @@ end
 local function Draw(id, dtype, props)
 	local c = Cache[id]
 	if not c then
-		c = { Obj = Drawing.new(dtype), P = {} }
+		local obj
+		local ok = pcall(function()
+			obj = Drawing.new(dtype)
+		end)
+		if not ok or not obj then
+			obj = setmetatable({}, {
+				__newindex = function() end,
+				__index = function() return function() end end
+			})
+		end
+		c = { Obj = obj, P = {} }
 		Cache[id] = c
 	end
 	local obj, P = c.Obj, c.P
 	local vis = props.Visible
 	if vis == nil then vis = true end
-	if P.Visible ~= vis then obj.Visible = vis; P.Visible = vis end
+	if P.Visible ~= vis then 
+		pcall(function() obj.Visible = vis end)
+		P.Visible = vis 
+	end
 	if vis then
 		for k, v in pairs(props) do
 			if k ~= "Visible" and not eq(P[k], v) then
-				obj[k] = v
+				pcall(function() obj[k] = v end)
 				P[k] = v
 			end
 		end
@@ -375,7 +388,7 @@ local function cleanupDrawings()
 	for id in pairs(Visible) do
 		local c = Cache[id]
 		if c and c.Tick ~= CurTick and c.P.Visible then
-			c.Obj.Visible = false
+			pcall(function() c.Obj.Visible = false end)
 			c.P.Visible = false
 			Visible[id] = nil
 		end
@@ -413,6 +426,27 @@ local function textW(str, size)
 	return #tostring(str) * size * 0.52
 end
 
+local function safeIsKeyPressed(vk)
+	if not vk or vk <= 0 or vk > 255 then return false end
+	local pressed = false
+	pcall(function()
+		if iskeypressed then
+			pressed = iskeypressed(vk)
+		end
+	end)
+	return pressed
+end
+
+local function safeIsMouse1Pressed()
+	local pressed = false
+	pcall(function()
+		if ismouse1pressed then
+			pressed = ismouse1pressed()
+		end
+	end)
+	return pressed
+end
+
 -- Input Manager
 local Input = { mx = 0, my = 0, down = false, prevDown = false, clicked = false, keys = {} }
 
@@ -422,15 +456,16 @@ end
 
 local function pollInput()
 	Input.mx, Input.my = Mouse.X, Mouse.Y
-	Input.down = ismouse1pressed()
+	Input.down = safeIsMouse1Pressed()
 	Input.clicked = Input.down and not Input.prevDown
 end
 
 -- Key State Polling
 local function keyEdge(vk)
+	if not vk or vk <= 0 or vk > 255 then return false end
 	local k = Input.keys[vk]
 	if not k then k = { held = false }; Input.keys[vk] = k end
-	local p = iskeypressed(vk)
+	local p = safeIsKeyPressed(vk)
 	local click = p and not k.held
 	k.held = p
 	return click
@@ -492,7 +527,8 @@ local function getVKName(vk)
 end
 
 local function getVKFromName(name)
-	name = name:upper()
+	if not name then return nil end
+	name = tostring(name):upper()
 	for vk, n in pairs(VK_Names) do
 		if n:upper() == name then return vk end
 	end
@@ -706,7 +742,7 @@ local function hideElementDrawings(el, idx)
 		local id = pfx:find("_") and pfx or (pfx .. idx)
 		local c = Cache[id]
 		if c and c.Obj and c.P.Visible then
-			c.Obj.Visible = false
+			pcall(function() c.Obj.Visible = false end)
 			c.P.Visible = false
 			Visible[id] = nil
 		end
@@ -1355,7 +1391,7 @@ if UserInputService and UserInputService.InputBegan then
 				else
 					local char = KeyMap[kc]
 					if char then
-						local shift = iskeypressed(0x10) or iskeypressed(0xA0) or iskeypressed(0xA1)
+						local shift = safeIsKeyPressed(0x10) or safeIsKeyPressed(0xA0) or safeIsKeyPressed(0xA1)
 						if shift then
 							char = ShiftMap[char] or char
 						end
@@ -1370,13 +1406,19 @@ end
 
 -- The core frame-by-frame loop step
 local function step()
-	if not isrbxactive() then return end
+	local active = true
+	pcall(function()
+		if isrbxactive then
+			active = isrbxactive()
+		end
+	end)
+	if not active then return end
 	CurTick = CurTick + 1
 	InputProcessed = false
 	
 	local now = tick()
 	local dt = State.LastTime and (now - State.LastTime) or 0.016
-	if dt > 0.1 then dt = 0.1 elseif dt < 0 then dt = 0.016 end
+	if dt > 0.1 then dt = 0.1 elseif dt < 0.001 then dt = 0.016 end
 	State.LastTime = now
 	
 	pollInput()
@@ -1394,6 +1436,7 @@ local function step()
 	
 	local clicks = {}
 	local function ck(vk)
+		if not vk or vk <= 0 or vk > 255 then return false end
 		local c = clicks[vk]
 		if c == nil then c = keyEdge(vk); clicks[vk] = c end
 		return c
@@ -1738,8 +1781,7 @@ function Library:CreateWindow(Settings)
 			function keybindObj:GetState()
 				if not el.value or el.value == "None" then return false end
 				local vk = getVKFromName(el.value)
-				if not vk then return false end
-				return iskeypressed(vk)
+				return safeIsKeyPressed(vk)
 			end
 			return keybindObj
 		end
