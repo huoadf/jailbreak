@@ -1,15 +1,16 @@
 -- [[ Rayfield UI Library for Matcha LuaVM ]] --
--- Created for universal compatibility using pure Drawing API
+
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local Mouse = LocalPlayer:GetMouse()
 local HttpService = game:GetService("HttpService")
-local UserInputService = game:GetService("UserInputService")
 
 Rayfield = {}
 local Library = Rayfield
 _G.Rayfield = Rayfield
+
+Library.Flags = {}
 
 -- Theme Definitions (Ported directly from Rayfield)
 Library.Theme = {
@@ -104,7 +105,7 @@ Library.Theme = {
 		ToggleDisabled = Color3.fromRGB(90, 70, 60),
 		ToggleEnabledStroke = Color3.fromRGB(255, 160, 50),
 		ToggleDisabledStroke = Color3.fromRGB(110, 85, 75),
-		ToggleEnabledOuterStroke = Color3.fromRGB(20, 100, 50),
+		ToggleEnabledOuterStroke = Color3.fromRGB(200, 100, 50),
 		ToggleDisabledOuterStroke = Color3.fromRGB(75, 60, 55),
 		DropdownSelected = Color3.fromRGB(70, 50, 40),
 		DropdownUnselected = Color3.fromRGB(55, 40, 30),
@@ -182,7 +183,7 @@ Library.Theme = {
 		TextColor = Color3.fromRGB(30, 60, 30),
 		Background = Color3.fromRGB(235, 245, 235),
 		Topbar = Color3.fromRGB(210, 230, 210),
-		Shadow = Color3.fromRGB(20, 60, 20),
+		Shadow = Color3.fromRGB(200, 220, 200),
 		NotificationBackground = Color3.fromRGB(240, 250, 240),
 		NotificationActionsBackground = Color3.fromRGB(220, 235, 220),
 		TabBackground = Color3.fromRGB(215, 235, 215),
@@ -314,6 +315,13 @@ Library.Theme = {
 
 local Theme = Library.Theme.Default
 
+-- Configuration Settings
+local CFileName = nil
+local CEnabled = false
+local ConfigurationFolder = "Rayfield"
+local ConfigurationExtension = ".json"
+local globalLoaded = false
+
 -- Spring System (for smooth interpolation)
 local function newSpring(v, speed)
 	return { v = v, goal = v, speed = speed or 16 }
@@ -331,6 +339,58 @@ end
 local function lerpColor(a, b, t)
 	return Color3.new(lerp(a.R, b.R, t), lerp(a.G, b.G, t), lerp(a.B, b.B, t))
 end
+
+-- Key Mapping Helpers
+local KeyName = {
+	[0x41]="A",[0x42]="B",[0x43]="C",[0x44]="D",[0x45]="E",[0x46]="F",[0x47]="G",[0x48]="H",[0x49]="I",[0x4A]="J",
+	[0x4B]="K",[0x4C]="L",[0x4D]="M",[0x4E]="N",[0x4F]="O",[0x50]="P",[0x51]="Q",[0x52]="R",[0x53]="S",[0x54]="T",
+	[0x55]="U",[0x56]="V",[0x57]="W",[0x58]="X",[0x59]="Y",[0x5A]="Z",
+	[0x30]="0",[0x31]="1",[0x32]="2",[0x33]="3",[0x34]="4",[0x35]="5",[0x36]="6",[0x37]="7",[0x38]="8",[0x39]="9",
+	[0x70]="F1",[0x71]="F2",[0x72]="F3",[0x73]="F4",[0x74]="F5",[0x75]="F6",[0x76]="F7",[0x77]="F8",[0x78]="F9",[0x79]="F10",[0x7A]="F11",[0x7B]="F12",
+	[0x10]="Shift",[0x11]="Ctrl",[0x12]="Alt",[0x20]="Space",[0x09]="Tab",[0x1B]="Esc",
+	[0x23]="End",[0x24]="Home",[0x2D]="Insert",[0x2E]="Delete",
+	[0x25]="Left",[0x26]="Up",[0x27]="Right",[0x28]="Down",
+	[0x01]="MB1",[0x02]="MB2",[0x05]="Mouse4",[0x06]="Mouse5",
+}
+
+local KeyAlias = {
+	LeftControl = 0x11, RightControl = 0x11, Control = 0x11, Ctrl = 0x11,
+	LeftShift = 0x10, RightShift = 0x10, Shift = 0x10,
+	LeftAlt = 0x12, RightAlt = 0x12, Alt = 0x12,
+	MB1 = 0x01, MB2 = 0x02, Mouse1 = 0x01, Mouse2 = 0x02,
+	Return = 0x0D, Enter = 0x0D, Escape = 0x1B, Backspace = 0x08, Spacebar = 0x20,
+}
+
+local function resolveKey(v)
+	if not v then return nil, "None" end
+	if type(v) == "userdata" or type(v) == "table" then
+		pcall(function() v = v.Name or tostring(v) end)
+	end
+	if type(v) == "number" then return v, KeyName[v] or tostring(v) end
+	if type(v) == "string" or type(v) == "userdata" then
+		v = tostring(v)
+		local up = v:upper()
+		if KeyAlias[v] then return KeyAlias[v], KeyName[KeyAlias[v]] or v end
+		for vk, name in pairs(KeyName) do if name:upper() == up then return vk, name end end
+	end
+	return nil, "None"
+end
+
+local ScanList = {}
+for vk in pairs(KeyName) do ScanList[#ScanList + 1] = vk end
+
+local CharMap = {}
+for vk = 0x41, 0x5A do CharMap[vk] = { string.char(vk + 32), string.char(vk) } end
+do
+	local d = { [0x30]={"0",")"},[0x31]={"1","!"},[0x32]={"2","@"},[0x33]={"3","#"},[0x34]={"4","$"},
+				[0x35]={"5","%"},[0x36]={"6","^"},[0x37]={"7","&"},[0x38]={"8","*"},[0x39]={"9","("} }
+	for vk, m in pairs(d) do CharMap[vk] = m end
+	CharMap[0x20]={" "," "}; CharMap[0xBA]={";",":"}; CharMap[0xBB]={"=","+"}; CharMap[0xBC]={",","<"}
+	CharMap[0xBD]={"-","_"}; CharMap[0xBE]={".",">"}; CharMap[0xBF]={"/","?"}; CharMap[0xC0]={"`","~"}
+	CharMap[0xDB]={"[","{"}; CharMap[0xDC]={"\\","|"}; CharMap[0xDD]={"]","}"}; CharMap[0xDE]={"'","\""}
+end
+local CharScanList = {}
+for vk in pairs(CharMap) do CharScanList[#CharScanList + 1] = vk end
 
 -- Drawing Object Cache (IMGUI pattern on top of retained Drawing instances)
 local Cache = {}
@@ -422,6 +482,11 @@ local function line(id, x1, y1, x2, y2, color, op, z)
 		From = Vector2.new(x1, y1), To = Vector2.new(x2, y2), Thickness = 1 })
 end
 
+local function image(id, data, x, y, w, h, op, z, rounding)
+	Draw(id, "Image", { Data = data, Size = Vector2.new(w, h), Position = Vector2.new(x, y),
+		Transparency = op or 1, ZIndex = z or 1, Rounding = rounding or 0 })
+end
+
 local function textW(str, size)
 	return #tostring(str) * size * 0.52
 end
@@ -471,156 +536,28 @@ local function keyEdge(vk)
 	return click
 end
 
--- Alphanumeric / Symbols keycode map for inputs
-local KeyMap = {}
-pcall(function()
-	local function addKey(enumItem, char)
-		if enumItem ~= nil then
-			KeyMap[enumItem] = char
-		end
-	end
-	
-	-- Letters
-	addKey(Enum.KeyCode.A, "a") addKey(Enum.KeyCode.B, "b") addKey(Enum.KeyCode.C, "c") addKey(Enum.KeyCode.D, "d")
-	addKey(Enum.KeyCode.E, "e") addKey(Enum.KeyCode.F, "f") addKey(Enum.KeyCode.G, "g") addKey(Enum.KeyCode.H, "h")
-	addKey(Enum.KeyCode.I, "i") addKey(Enum.KeyCode.J, "j") addKey(Enum.KeyCode.K, "k") addKey(Enum.KeyCode.L, "l")
-	addKey(Enum.KeyCode.M, "m") addKey(Enum.KeyCode.N, "n") addKey(Enum.KeyCode.O, "o") addKey(Enum.KeyCode.P, "p")
-	addKey(Enum.KeyCode.Q, "q") addKey(Enum.KeyCode.R, "r") addKey(Enum.KeyCode.S, "s") addKey(Enum.KeyCode.T, "t")
-	addKey(Enum.KeyCode.U, "u") addKey(Enum.KeyCode.V, "v") addKey(Enum.KeyCode.W, "w") addKey(Enum.KeyCode.X, "x")
-	addKey(Enum.KeyCode.Y, "y") addKey(Enum.KeyCode.Z, "z")
-	
-	-- Numbers
-	addKey(Enum.KeyCode.Zero, "0") addKey(Enum.KeyCode.One, "1") addKey(Enum.KeyCode.Two, "2") addKey(Enum.KeyCode.Three, "3")
-	addKey(Enum.KeyCode.Four, "4") addKey(Enum.KeyCode.Five, "5") addKey(Enum.KeyCode.Six, "6") addKey(Enum.KeyCode.Seven, "7")
-	addKey(Enum.KeyCode.Eight, "8") addKey(Enum.KeyCode.Nine, "9")
-	
-	-- Special characters
-	addKey(Enum.KeyCode.Minus, "-") addKey(Enum.KeyCode.Equals, "=") addKey(Enum.KeyCode.LeftBracket, "[")
-	addKey(Enum.KeyCode.RightBracket, "]") addKey(Enum.KeyCode.Semicolon, ";") addKey(Enum.KeyCode.Quote, "'")
-	addKey(Enum.KeyCode.Comma, ",") addKey(Enum.KeyCode.Period, ".") addKey(Enum.KeyCode.Slash, "/")
-	addKey(Enum.KeyCode.BackSlash, "\\")
-end)
-
-local ShiftMap = {
-	["a"] = "A", ["b"] = "B", ["c"] = "C", ["d"] = "D", ["e"] = "E", ["f"] = "F", ["g"] = "G", ["h"] = "H",
-	["i"] = "I", ["j"] = "J", ["k"] = "K", ["l"] = "L", ["m"] = "M", ["n"] = "N", ["o"] = "O", ["p"] = "P",
-	["q"] = "Q", ["r"] = "R", ["s"] = "S", ["t"] = "T", ["u"] = "U", ["v"] = "V", ["w"] = "W", ["x"] = "X",
-	["y"] = "Y", ["z"] = "Z",
-	["1"] = "!", ["2"] = "@", ["3"] = "#", ["4"] = "$", ["5"] = "%", ["6"] = "^", ["7"] = "&", ["8"] = "*",
-	["9"] = "(", ["0"] = ")", ["-"] = "_", ["="] = "+", ["["] = "{", ["]"] = "}", [";"] = ":", ["'"] = "\"",
-	[","] = "<", ["."] = ">", ["/"] = "?", ["\\"] = "|",
-}
-
-local VK_Names = {
-	[0x0D] = "Enter", [0x20] = "Space", [0x23] = "End", [0x2D] = "Insert",
-	[0x10] = "Shift", [0x11] = "Ctrl", [0x12] = "Alt",
-	[0x25] = "Left", [0x26] = "Up", [0x27] = "Right", [0x28] = "Down",
-	[0x70] = "F1", [0x71] = "F2", [0x72] = "F3", [0x73] = "F4", [0x74] = "F5",
-	[0x75] = "F6", [0x76] = "F7", [0x77] = "F8", [0x78] = "F9", [0x79] = "F10",
-	[0x7A] = "F11", [0x7B] = "F12",
-}
-for i = 65, 90 do VK_Names[i] = string.char(i) end
-for i = 48, 57 do VK_Names[i] = string.char(i) end
-
-local function getVKName(vk)
-	return VK_Names[vk] or ("0x" .. string.format("%X", vk))
-end
-
-local function getVKFromName(name)
-	if not name then return nil end
-	name = tostring(name):upper()
-	for vk, n in pairs(VK_Names) do
-		if n:upper() == name then return vk end
-	end
-	if name:sub(1, 2) == "0X" then
-		return tonumber(name, 16)
-	end
-	return nil
-end
-
 -- Global Window and Library States
 local State = {
 	Win = { x = 100, y = 100, w = 560, h = 400 },
 	Drag = false, DragOff = Vector2.new(0, 0),
 	ActiveTab = 1,
-	ToggleKey = 0, -- Disabled by default (let script manage keybinds)
+	ToggleKey = 0x23, -- End Key (VK_END)
 	Minimized = false,
 	Overlay = nil,
 	Dialog = nil,
+	KBListening = nil,
+	Focused = nil,
 	Vw = 1920, Vh = 1080,
 	LastTime = nil,
 	Running = false, Token = nil,
 	Loaded = false,
 	Unloaded = false,
-	Scrolling = false,
 }
 
 local Tabs = {}
 local Notifs = {}
 local NotifId = 0
-local FocusedInput = nil
-local InputProcessed = false
-
--- Config state storage
-Library.Flags = {}
-local currentConfig = { Enabled = false, Folder = "Rayfield", File = "config" }
-
-local function saveConfig()
-	if not currentConfig.Enabled then return end
-	local folder = currentConfig.Folder
-	local file = currentConfig.File
-	local path = folder .. "/" .. file .. ".json"
-	
-	local data = {}
-	for flag, val in pairs(Library.Flags) do
-		local t = typeof(val)
-		if t == "boolean" or t == "number" or t == "string" then
-			data[flag] = val
-		elseif t == "Color3" then
-			data[flag] = { r = val.R, g = val.G, b = val.B, type = "Color3" }
-		end
-	end
-	
-	pcall(function()
-		if not isfolder(folder) then
-			makefolder(folder)
-		end
-		writefile(path, HttpService:JSONEncode(data))
-	end)
-end
-
-local function loadConfig()
-	if not currentConfig.Enabled then return end
-	local folder = currentConfig.Folder
-	local file = currentConfig.File
-	local path = folder .. "/" .. file .. ".json"
-	
-	if not isfile(path) then return end
-	
-	local ok, content = pcall(readfile, path)
-	if not ok or not content then return end
-	
-	local ok2, data = pcall(function() return HttpService:JSONDecode(content) end)
-	if not ok2 or type(data) ~= "table" then return end
-	
-	for flag, val in pairs(data) do
-		if type(val) == "table" and val.type == "Color3" then
-			Library.Flags[flag] = Color3.new(val.r or 1, val.g or 1, val.b or 1)
-		else
-			Library.Flags[flag] = val
-		end
-	end
-end
-
-function Library:SaveConfig(name)
-	if name then currentConfig.File = name end
-	saveConfig()
-end
-
-function Library:LoadConfig(name)
-	if name then currentConfig.File = name end
-	loadConfig()
-end
+local AllKeybinds = {}
 
 -- Loader / Splash Screen
 local Loader = {
@@ -650,6 +587,14 @@ local function getViewportSize()
 	return vw, vh
 end
 
+local function safe(fn, ...)
+	if type(fn) ~= "function" then return end
+	local ok, err = pcall(fn, ...)
+	if not ok then
+		warn("[Rayfield] callback error: " .. tostring(err))
+	end
+end
+
 -- Notification Manager
 function Library:Notify(cfg)
 	cfg = cfg or {}
@@ -676,6 +621,67 @@ function Library:Notify(cfg)
 	return n
 end
 
+-- Save/Load Configuration System
+local function PackColor(color)
+	return { R = math.floor(color.R * 255), G = math.floor(color.G * 255), B = math.floor(color.B * 255) }
+end
+
+local function UnpackColor(tbl)
+	if not tbl then return Color3.fromRGB(255, 255, 255) end
+	return Color3.fromRGB(tbl.R or 255, tbl.G or 255, tbl.B or 255)
+end
+
+local function SaveConfiguration()
+	if not CEnabled or not globalLoaded then return end
+	local Data = {}
+	for flag, el in pairs(Library.Flags) do
+		if el.kind == "colorpicker" then
+			Data[flag] = PackColor(el.value)
+		else
+			Data[flag] = el.value
+		end
+	end
+	
+	pcall(function()
+		local path = ConfigurationFolder .. "/" .. CFileName .. ConfigurationExtension
+		writefile(path, HttpService:JSONEncode(Data))
+	end)
+end
+
+local function LoadConfiguration(jsonStr)
+	local success, Data = pcall(function() return HttpService:JSONDecode(jsonStr) end)
+	if not success or type(Data) ~= "table" then return false end
+	
+	for flag, val in pairs(Data) do
+		local el = Library.Flags[flag]
+		if el then
+			if el.kind == "colorpicker" then
+				el:SetValue(UnpackColor(val))
+			else
+				el:SetValue(val)
+			end
+		end
+	end
+	return true
+end
+
+function Library:LoadConfiguration()
+	if not CEnabled then return end
+	pcall(function()
+		local path = ConfigurationFolder .. "/" .. CFileName .. ConfigurationExtension
+		if isfile(path) then
+			local content = readfile(path)
+			if content and content ~= "" then
+				local loaded = LoadConfiguration(content)
+				if loaded then
+					Library:Notify({ Title = "Configurations", Content = "Configuration loaded successfully.", Duration = 4 })
+				end
+			end
+		end
+	end)
+	globalLoaded = true
+end
+
 -- Window dragging logic
 local function handleDragging()
 	local win = State.Win
@@ -696,288 +702,467 @@ local function handleDragging()
 	end
 end
 
--- Dynamic element heights helper
-local function getElementHeight(el)
-	if el.type == "Section" then return 28
-	elseif el.type == "Divider" then return 10
-	elseif el.type == "Label" then return 20
-	elseif el.type == "Paragraph" then
-		return 24 + #el.lines * 14
-	elseif el.type == "Slider" then return 46
-	else return 36
-	end
+-- Dynamic height calculated per element
+local function cardHeight(el)
+	if el.kind == "section" then return 22 end
+	if el.kind == "divider" then return 6 end
+	if el.kind == "label" then return 28 end
+	if el.kind == "paragraph" then return 24 + 18 + #el.lines * 15 end
+	if el.kind == "slider" then return 48 end
+	return 38
 end
 
--- Hide drawings for off-screen scrolled elements
-local function hideElementDrawings(el, idx)
-	local pfxs = {}
-	if el.type == "Section" then
-		pfxs = { "sec.t", "sec.l" }
-	elseif el.type == "Divider" then
-		pfxs = { "div.l" }
-	elseif el.type == "Label" then
-		pfxs = { "lbl.t" }
-	elseif el.type == "Paragraph" then
-		pfxs = { "par.bg", "par.t" }
-		for li = 1, #el.lines do
-			table.insert(pfxs, "par.c" .. idx .. "_" .. li)
-		end
-	elseif el.type == "Button" then
-		pfxs = { "btn.bg", "btn.bd", "btn.t" }
-	elseif el.type == "Toggle" then
-		pfxs = { "tog.bg", "tog.bd", "tog.t", "tog.sw", "tog.swbd", "tog.kb" }
-	elseif el.type == "Slider" then
-		pfxs = { "sld.bg", "sld.bd", "sld.t", "sld.v", "sld.tr", "sld.fi", "sld.kb" }
-	elseif el.type == "Input" then
-		pfxs = { "inp.bg", "inp.bd", "inp.t", "inp.bx", "inp.bxbd", "inp.disp" }
-	elseif el.type == "Dropdown" then
-		pfxs = { "drp.bg", "drp.bd", "drp.t", "drp.bx", "drp.bxbd", "drp.arrow", "drp.disp" }
-	elseif el.type == "Keybind" then
-		pfxs = { "kb.bg", "kb.bd", "kb.t", "kb.bx", "kb.bxbd", "kb.disp" }
-	elseif el.type == "ColorPicker" then
-		pfxs = { "cp.bg", "cp.bd", "cp.t", "cp.bx", "cp.bxbd" }
+-- Render elements inside the active tab
+local function processEl(el, idp, x, y, w, h, dt, z, block)
+	local hovered = inBounds(x, y, w, h) and not State.Drag and not block
+	local interactive = (el.kind ~= "section" and el.kind ~= "divider" and el.kind ~= "label" and el.kind ~= "paragraph")
+	
+	if interactive then
+		el.hover.goal = hovered and 1 or 0
+		springStep(el.hover, dt)
+		rect(idp .. ".bg", x, y, w, h, Theme.ElementBackground, lerp(0.98, 1, el.hover.v), z, 6)
+		outline(idp .. ".bd", x, y, w, h, hovered and Theme.TabBackground or Theme.ElementStroke, 0.4, z + 1, 6)
 	end
 	
-	for _, pfx in ipairs(pfxs) do
-		local id = pfx:find("_") and pfx or (pfx .. idx)
-		local c = Cache[id]
-		if c and c.Obj and c.P.Visible then
-			pcall(function() c.Obj.Visible = false end)
-			c.P.Visible = false
-			Visible[id] = nil
+	-- 1. Section widget
+	if el.kind == "section" then
+		text(idp .. ".t", el.title:upper(), x + 10, y + 4, 11, Theme.TextColor, z + 2)
+		
+	-- 2. Divider widget
+	elseif el.kind == "divider" then
+		line(idp .. ".l", x + 10, y + 3, x + w - 10, y + 3, Theme.SecondaryElementStroke, 0.4, z + 2)
+		
+	-- 3. Label widget
+	elseif el.kind == "label" then
+		text(idp .. ".t", el.title, x + 10, y + 6, 12, el.color or Theme.TextColor, z + 2)
+		
+	-- 4. Paragraph widget
+	elseif el.kind == "paragraph" then
+		rect(idp .. ".bg", x, y, w, h, Theme.SecondaryElementBackground, 0.98, z, 6)
+		outline(idp .. ".bd", x, y, w, h, Theme.SecondaryElementStroke, 0.4, z + 1, 6)
+		text(idp .. ".t", el.title, x + 14, y + 10, 13, Theme.TextColor, z + 2)
+		local ly = y + 28
+		for i, ln in ipairs(el.lines) do
+			text(idp .. ".l" .. i, ln, x + 14, ly, 12, Color3.fromRGB(180, 180, 180), z + 2)
+			ly = ly + 15
 		end
-	end
-end
-
--- Render individual element
-local function renderElement(el, x, y, w, h, idx, dt)
-	local clickOk = Input.clicked and not InputProcessed
-	
-	if el.type == "Section" then
-		text("sec.t" .. idx, el.name:upper(), x + 5, y + 8, 11, Theme.SliderProgress, 21, false, 1, false)
-		line("sec.l" .. idx, x + textW(el.name:upper(), 11) + 15, y + 14, x + w - 5, y + 14, Theme.ElementStroke, 0.3, 21)
-	elseif el.type == "Divider" then
-		line("div.l" .. idx, x + 5, y + 5, x + w - 5, y + 5, Theme.ElementStroke, 0.35, 21)
-	elseif el.type == "Label" then
-		text("lbl.t" .. idx, el.name, x + 10, y + 4, 13, Theme.TextColor, 21, false)
-	elseif el.type == "Paragraph" then
-		rect("par.bg" .. idx, x, y, w, h, Theme.ElementBackground, 0.45, 20, 6)
-		text("par.t" .. idx, el.name, x + 12, y + 8, 13, Theme.TextColor, 21)
-		local cy = y + 24
-		for li, ln in ipairs(el.lines) do
-			text("par.c" .. idx .. "_" .. li, ln, x + 12, cy, 12, Color3.fromRGB(160, 160, 160), 21, false)
-			cy = cy + 14
+		
+	-- 5. Button widget
+	elseif el.kind == "button" then
+		text(idp .. ".t", el.title, x + 14, y + 11, 13, Theme.TextColor, z + 2)
+		local btnX = x + w - 28
+		local btnY = y + 11
+		text(idp .. ".ic", ">", btnX, btnY, 13, Theme.TextColor, z + 3)
+		if hovered and Input.clicked then
+			safe(el.callback)
 		end
-	elseif el.type == "Button" then
-		local hovered = inBounds(x, y, w, h)
-		local bgCol = hovered and Theme.ElementBackgroundHover or Theme.ElementBackground
-		rect("btn.bg" .. idx, x, y, w, h, bgCol, 0.9, 20, 6)
-		outline("btn.bd" .. idx, x, y, w, h, Theme.ElementStroke, 0.4, 21, 6)
-		text("btn.t" .. idx, el.name, x + w / 2, y + 11, 13, Theme.TextColor, 22, true)
 		
-		if hovered and clickOk then
-			task.spawn(el.callback)
-		end
-	elseif el.type == "Toggle" then
-		el.toggleSpring = el.toggleSpring or newSpring(el.value and 1 or 0, 15)
-		el.toggleSpring.goal = el.value and 1 or 0
-		springStep(el.toggleSpring, dt)
+	-- 6. Toggle widget
+	elseif el.kind == "toggle" then
+		text(idp .. ".t", el.title, x + 14, y + 11, 13, Theme.TextColor, z + 2)
+		local pillW, pillH = 34, 18
+		local px = x + w - 12 - pillW
+		local py = y + math.floor((h - pillH) / 2)
 		
-		local hovered = inBounds(x, y, w, h)
-		local bgCol = hovered and Theme.ElementBackgroundHover or Theme.ElementBackground
-		rect("tog.bg" .. idx, x, y, w, h, bgCol, 0.9, 20, 6)
-		outline("tog.bd" .. idx, x, y, w, h, Theme.ElementStroke, 0.4, 21, 6)
-		text("tog.t" .. idx, el.name, x + 12, y + 11, 13, Theme.TextColor, 22)
-		
-		local swW, swH = 34, 18
-		local swX = x + w - swW - 12
-		local swY = y + 9
-		local trCol = lerpColor(Theme.ToggleDisabled, Theme.ToggleEnabled, el.toggleSpring.v)
-		
-		rect("tog.sw" .. idx, swX, swY, swW, swH, trCol, 1, 22, 9)
-		outline("tog.swbd" .. idx, swX, swY, swW, swH, lerpColor(Theme.ToggleDisabledStroke, Theme.ToggleEnabledStroke, el.toggleSpring.v), 0.5, 23, 9)
-		
-		local knobX = swX + 9 + el.toggleSpring.v * 16
-		circle("tog.kb" .. idx, knobX, swY + 9, 6, Color3.new(1, 1, 1), 1, 24)
-		
-		if hovered and clickOk then
+		if hovered and Input.clicked then
 			el.value = not el.value
-			if el.flag then Library.Flags[el.flag] = el.value; saveConfig() end
-			task.spawn(el.callback, el.value)
+			el.anim.goal = el.value and 1 or 0
+			safe(el.callback, el.value)
+			SaveConfiguration()
 		end
-	elseif el.type == "Slider" then
-		local hovered = inBounds(x, y, w, h)
-		local bgCol = hovered and Theme.ElementBackgroundHover or Theme.ElementBackground
-		rect("sld.bg" .. idx, x, y, w, h, bgCol, 0.9, 20, 6)
-		outline("sld.bd" .. idx, x, y, w, h, Theme.ElementStroke, 0.4, 21, 6)
-		text("sld.t" .. idx, el.name, x + 12, y + 6, 12, Theme.TextColor, 22)
 		
-		local valStr = tostring(el.value) .. (el.suffix or "")
-		text("sld.v" .. idx, valStr, x + w - 12 - textW(valStr, 12), y + 6, 12, Theme.SliderProgress, 22)
+		springStep(el.anim, dt)
+		local t = el.anim.v
+		rect(idp .. ".pill", px, py, pillW, pillH, lerpColor(Theme.ToggleBackground, Theme.ToggleEnabled, t), 0.98, z + 2, 9)
+		outline(idp .. ".pilb", px, py, pillW, pillH, lerpColor(Theme.ToggleDisabledOuterStroke, Theme.ToggleEnabledStroke, t), 0.5, z + 3, 9)
+		circle(idp .. ".knob", px + lerp(9, 25, t), py + pillH / 2, 6, Color3.fromRGB(240, 240, 240), 1, z + 4)
 		
-		local sX = x + 12
-		local sY = y + 28
-		local sW = w - 24
-		local sH = 6
+	-- 7. Slider widget
+	elseif el.kind == "slider" then
+		local tx, tw = x + 14, w - 28
+		local ty = y + 34
+		local editing = (State.Focused and State.Focused.owner == el)
+		local vs = tostring(el.value) .. (el.suffix and (" " .. el.suffix) or "")
 		
-		rect("sld.tr" .. idx, sX, sY, sW, sH, Color3.fromRGB(40, 40, 40), 1, 22, 3)
+		text(idp .. ".t", el.title, x + 14, y + 8, 13, Theme.TextColor, z + 2)
 		
-		local trackHovered = inBounds(sX - 5, sY - 5, sW + 10, sH + 10)
-		if Input.down and (trackHovered or el.dragging) and not InputProcessed then
-			if Input.clicked then el.dragging = true end
-		end
-		if not Input.down then el.dragging = false end
+		local vwid = textW(vs, 12)
+		local vx = x + w - 14 - vwid
+		local vHover = not block and inBounds(vx - 4, y + 6, vwid + 8, 16)
 		
-		if el.dragging then
-			local pct = clamp((Input.mx - sX) / sW, 0, 1)
-			local rawVal = el.min + pct * (el.max - el.min)
-			local steps = math.round((rawVal - el.min) / (el.increment or 1))
-			local newVal = el.min + steps * (el.increment or 1)
-			newVal = clamp(newVal, el.min, el.max)
-			if newVal ~= el.value then
-				el.value = newVal
-				if el.flag then Library.Flags[el.flag] = el.value; saveConfig() end
-				task.spawn(el.callback, el.value)
+		text(idp .. ".v", vs, vx, y + 8, 12, editing and Theme.SliderStroke or Theme.TextColor, z + 2)
+		
+		if not editing and Input.down and not block and (el.dragging or (Input.clicked and not vHover and inBounds(tx - 4, ty - 6, tw + 8, 12))) then
+			el.dragging = true
+			local f = clamp((Input.mx - tx) / tw, 0, 1)
+			local raw = el.min + f * (el.max - el.min)
+			local stepSize = el.increment or 1
+			local v = clamp(math.floor(raw / stepSize + 0.5) * stepSize, el.min, el.max)
+			if v ~= el.value then
+				el.value = v
+				el.frac.goal = (el.value - el.min) / math.max(1e-6, el.max - el.min)
+				safe(el.callback, v)
+				SaveConfiguration()
 			end
+		elseif not Input.down then
+			el.dragging = false
 		end
 		
-		local fillW = math.floor(sW * ((el.value - el.min) / (el.max - el.min)))
-		rect("sld.fi" .. idx, sX, sY, fillW, sH, Theme.SliderProgress, 1, 23, 3)
-		circle("sld.kb" .. idx, sX + fillW, sY + 3, 5, Color3.new(1, 1, 1), 1, 24)
-	elseif el.type == "Input" then
-		local hovered = inBounds(x, y, w, h)
-		local bgCol = hovered and Theme.ElementBackgroundHover or Theme.ElementBackground
-		rect("inp.bg" .. idx, x, y, w, h, bgCol, 0.9, 20, 6)
-		outline("inp.bd" .. idx, x, y, w, h, Theme.ElementStroke, 0.4, 21, 6)
-		text("inp.t" .. idx, el.name, x + 12, y + 11, 13, Theme.TextColor, 22)
+		if not editing and vHover and Input.clicked then
+			State.KBListening = nil; State.Overlay = nil; el.dragging = false
+			State.Focused = { owner = el, buf = tostring(el.value), numeric = true,
+				onCommit = function(buf)
+					local n = tonumber(buf)
+					if n then
+						el:SetValue(n)
+					end
+				end
+			}
+		end
 		
-		local boxW = 120
-		local boxH = 22
-		local boxX = x + w - boxW - 12
-		local boxY = y + 7
-		local isFocused = (FocusedInput == el)
-		local boxHovered = inBounds(boxX, boxY, boxW, boxH)
+		springStep(el.frac, dt)
+		local f = clamp(el.frac.v, 0, 1)
+		rect(idp .. ".trk", tx, ty, tw, 4, Theme.SecondaryElementBackground, 0.4, z + 2, 2)
+		rect(idp .. ".fil", tx, ty, math.max(0, tw * f), 4, Theme.SliderProgress, 1, z + 3, 2)
+		circle(idp .. ".knb", tx + tw * f, ty + 2, 5, Theme.TextColor, 1, z + 4)
 		
-		rect("inp.bx" .. idx, boxX, boxY, boxW, boxH, Theme.InputBackground, 1, 22, 4)
-		outline("inp.bxbd" .. idx, boxX, boxY, boxW, boxH, isFocused and Theme.SliderStroke or Theme.InputStroke, 0.5, 23, 4)
+	-- 8. Input widget
+	elseif el.kind == "input" then
+		text(idp .. ".t", el.title, x + 14, y + 11, 13, Theme.TextColor, z + 2)
+		local boxH = 24
+		local boxW = math.min(140, math.floor(w * 0.4))
+		local bx = x + w - 12 - boxW
+		local by = y + math.floor((h - boxH) / 2)
+		local focused = (State.Focused and State.Focused.owner == el)
+		local bHover = not block and inBounds(bx, by, boxW, boxH)
+		
+		rect(idp .. ".ib", bx, by, boxW, boxH, Theme.InputBackground, 0.98, z + 2, 5)
+		outline(idp .. ".ibd", bx, by, boxW, boxH, focused and Theme.SliderStroke or Theme.InputStroke, 0.5, z + 3, 5)
+		
+		local raw = focused and State.Focused.buf or el.value or ""
+		local caret = (focused and math.floor(tick() * 2) % 2 == 0) and "|" or ""
+		local shown = (raw ~= "" and (raw .. caret)) or (caret ~= "" and caret) or (el.placeholder or "")
+		
+		text(idp .. ".it", shown, bx + 8, by + 5, 12, raw ~= "" and Theme.TextColor or Color3.fromRGB(150, 150, 150), z + 3)
+		
+		if bHover and Input.clicked then
+			State.KBListening = nil; State.Overlay = nil
+			State.Focused = { owner = el, buf = el.value, numeric = false,
+				onType = function(buf)
+					el.value = buf
+					safe(el.callback, buf)
+					SaveConfiguration()
+				end,
+				onCommit = function(buf)
+					el.value = buf
+					safe(el.callback, buf)
+					SaveConfiguration()
+					if el.clearOnFocusLost then el.value = "" end
+				end
+			}
+		end
+		
+	-- 9. Dropdown widget
+	elseif el.kind == "dropdown" then
+		text(idp .. ".t", el.title, x + 14, y + 11, 13, Theme.TextColor, z + 2)
+		local boxH = 24
+		local boxW = math.min(140, math.floor(w * 0.4))
+		local bx = x + w - 12 - boxW
+		local by = y + math.floor((h - boxH) / 2)
+		local bHover = not block and inBounds(bx, by, boxW, boxH)
+		
+		rect(idp .. ".db", bx, by, boxW, boxH, Theme.DropdownUnselected, 0.98, z + 2, 5)
+		outline(idp .. ".dbd", bx, by, boxW, boxH, Theme.ElementStroke, 0.5, z + 3, 5)
 		
 		local dispStr = el.value
-		local isPlaceholder = (dispStr == "")
-		if isPlaceholder then dispStr = el.placeholder or "" end
-		local dispCol = isPlaceholder and Theme.PlaceholderColor or Theme.TextColor
-		text("inp.disp" .. idx, dispStr, boxX + 6, boxY + 4, 12, dispCol, 24)
-		
-		if clickOk and boxHovered then
-			FocusedInput = el
-		elseif clickOk and not boxHovered and isFocused then
-			FocusedInput = nil
-			if el.flag then Library.Flags[el.flag] = el.value; saveConfig() end
-			task.spawn(el.callback, el.value)
-		end
-	elseif el.type == "Dropdown" then
-		local hovered = inBounds(x, y, w, h)
-		local bgCol = hovered and Theme.ElementBackgroundHover or Theme.ElementBackground
-		rect("drp.bg" .. idx, x, y, w, h, bgCol, 0.9, 20, 6)
-		outline("drp.bd" .. idx, x, y, w, h, Theme.ElementStroke, 0.4, 21, 6)
-		text("drp.t" .. idx, el.name, x + 12, y + 11, 13, Theme.TextColor, 22)
-		
-		local boxW = 120
-		local boxH = 22
-		local boxX = x + w - boxW - 12
-		local boxY = y + 7
-		local boxHovered = inBounds(boxX, boxY, boxW, boxH)
-		
-		rect("drp.bx" .. idx, boxX, boxY, boxW, boxH, Theme.InputBackground, 1, 22, 4)
-		outline("drp.bxbd" .. idx, boxX, boxY, boxW, boxH, Theme.InputStroke, 0.5, 23, 4)
-		text("drp.arrow" .. idx, "v", boxX + boxW - 14, boxY + 6, 8, Theme.TextColor, 24)
-		
-		local displayVal = tostring(el.value)
-		if #displayVal > 15 then displayVal = displayVal:sub(1, 12) .. "..." end
-		text("drp.disp" .. idx, displayVal, boxX + 6, boxY + 4, 12, Theme.TextColor, 24)
-		
-		if clickOk and boxHovered then
-			if State.Overlay and State.Overlay.element == el then
-				State.Overlay = nil
-			else
-				local overH = math.min(#el.options * 24 + 8, 150)
-				State.Overlay = {
-					type = "Dropdown",
-					element = el,
-					idx = idx,
-					x = boxX,
-					y = boxY + boxH + 2,
-					w = boxW,
-					h = overH,
-				}
-			end
-		end
-	elseif el.type == "Keybind" then
-		local hovered = inBounds(x, y, w, h)
-		local bgCol = hovered and Theme.ElementBackgroundHover or Theme.ElementBackground
-		rect("kb.bg" .. idx, x, y, w, h, bgCol, 0.9, 20, 6)
-		outline("kb.bd" .. idx, x, y, w, h, Theme.ElementStroke, 0.4, 21, 6)
-		text("kb.t" .. idx, el.name, x + 12, y + 11, 13, Theme.TextColor, 22)
-		
-		local boxW = 60
-		local boxH = 22
-		local boxX = x + w - boxW - 12
-		local boxY = y + 7
-		local boxHovered = inBounds(boxX, boxY, boxW, boxH)
-		
-		rect("kb.bx" .. idx, boxX, boxY, boxW, boxH, Theme.InputBackground, 1, 22, 4)
-		outline("kb.bxbd" .. idx, boxX, boxY, boxW, boxH, el.binding and Theme.SliderStroke or Theme.InputStroke, 0.5, 23, 4)
-		
-		local bindStr = el.binding and "..." or (el.value or "None")
-		text("kb.disp" .. idx, bindStr, boxX + boxW / 2, boxY + 4, 12, Theme.TextColor, 24, true)
-		
-		if clickOk and boxHovered then
-			el.binding = true
+		if el.multi then
+			local count = 0
+			for _ in pairs(el.selectedMap) do count = count + 1 end
+			dispStr = count .. " items"
 		end
 		
-		if el.binding then
-			for vk = 0x01, 0xFF do
-				if vk ~= 0x01 and vk ~= 0x02 and keyEdge(vk) then
-					el.binding = false
-					local name = getVKName(vk)
-					el.value = name
-					if el.flag then Library.Flags[el.flag] = el.value; saveConfig() end
-					task.spawn(el.callback, name)
-					break
+		text(idp .. ".dt", dispStr, bx + 8, by + 5, 12, Theme.TextColor, z + 3)
+		text(idp .. ".dc", "v", bx + boxW - 14, by + 5, 11, Color3.fromRGB(150, 150, 150), z + 3)
+		
+		if bHover and Input.clicked then
+			State.Overlay = { kind = "dropdown", el = el, x = bx, y = by + boxH + 4, w = boxW }
+		end
+		
+	-- 10. Keybind widget
+	elseif el.kind == "keybind" then
+		text(idp .. ".t", el.title, x + 14, y + 11, 13, Theme.TextColor, z + 2)
+		local boxH, boxW = 24, 76
+		local bx = x + w - 12 - boxW
+		local by = y + math.floor((h - boxH) / 2)
+		local listening = (State.KBListening == el)
+		local bHover = not block and inBounds(bx, by, boxW, boxH)
+		
+		rect(idp .. ".kb", bx, by, boxW, boxH, Theme.InputBackground, 0.98, z + 2, 5)
+		outline(idp .. ".kbd", bx, by, boxW, boxH, listening and Theme.SliderStroke or Theme.InputStroke, 0.5, z + 3, 5)
+		
+		local keyStr = listening and "..." or ("[" .. el.value .. "]")
+		text(idp .. ".kt", keyStr, bx + boxW / 2, by + boxH / 2, 12, listening and Theme.SliderStroke or Theme.TextColor, z + 3, true)
+		
+		if bHover and Input.clicked then
+			State.KBListening = el
+		end
+		
+	-- 11. Colorpicker widget
+	elseif el.kind == "colorpicker" then
+		text(idp .. ".t", el.title, x + 14, y + 11, 13, Theme.TextColor, z + 2)
+		local sw, swh = 30, 20
+		local bx = x + w - 12 - sw
+		local by = y + math.floor((h - swh) / 2)
+		local bHover = not block and inBounds(bx, by, sw, swh)
+		
+		rect(idp .. ".cw", bx, by, sw, swh, el.value, 1, z + 2, 5)
+		outline(idp .. ".cwd", bx, by, sw, swh, Theme.ElementStroke, 0.5, z + 3, 5)
+		
+		if bHover and Input.clicked then
+			State.Overlay = { kind = "colorpicker", el = el, ax = bx + sw, ay = by + swh + 4,
+				origH = el.h, origS = el.s, origV = el.v }
+		end
+	end
+end
+
+-- Render active dropdowns and colorpickers overlays
+local function renderOverlay(dt)
+	local ov = State.Overlay
+	if not ov then return false end
+	local Z = 120
+	
+	if ov.kind == "dropdown" then
+		local el = ov.el
+		local opts = el.options
+		local rowH = 26
+		local pad = 4
+		local visN = math.min(#opts, 6)
+		local needBar = #opts > visN
+		local barW = needBar and 6 or 0
+		local listH = visN * rowH
+		local panelW = ov.w
+		local panelH = pad * 2 + listH
+		local maxScroll = math.max(0, #opts - visN)
+		el.scroll = clamp(el.scroll or 0, 0, maxScroll)
+		
+		ov.anim = ov.anim or newSpring(0, 24)
+		ov.anim.goal = ov.closing and 0 or 1
+		local a = springStep(ov.anim, dt)
+		
+		if ov.closing and a < 0.04 then
+			State.Overlay = nil
+			return true
+		end
+		
+		rect("ov.bg", ov.x, ov.y, panelW, panelH, Theme.Topbar, a * 0.98, Z, 5)
+		outline("ov.bd", ov.x, ov.y, panelW, panelH, Theme.ElementStroke, a * 0.5, Z + 1, 5)
+		
+		local listTop = ov.y + pad
+		for i = 1, visN do
+			local opt = opts[i + el.scroll]
+			if opt then
+				local ry = listTop + (i - 1) * rowH
+				local rHover = inBounds(ov.x, ry, panelW - barW, rowH) and not ov.closing
+				local selected = el.multi and el.selectedMap[opt] or (not el.multi and el.value == opt)
+				
+				if selected then
+					rect("ov.r" .. i, ov.x + 2, ry, panelW - 4 - barW, rowH - 2, Theme.DropdownSelected, a, Z + 2, 4)
+				elseif rHover then
+					rect("ov.r" .. i, ov.x + 2, ry, panelW - 4 - barW, rowH - 2, Theme.ElementBackgroundHover, a * 0.3, Z + 2, 4)
+				end
+				
+				text("ov.t" .. i, tostring(opt), ov.x + 10, ry + 6, 12, selected and Theme.SliderStroke or Theme.TextColor, Z + 3, false, a)
+				
+				if rHover and Input.clicked then
+					if el.multi then
+						el.selectedMap[opt] = not el.selectedMap[opt] or nil
+						safe(el.callback, el.selectedMap)
+						SaveConfiguration()
+					else
+						el.value = opt
+						safe(el.callback, opt)
+						SaveConfiguration()
+						ov.closing = true
+					end
 				end
 			end
 		end
-	elseif el.type == "ColorPicker" then
-		local hovered = inBounds(x, y, w, h)
-		local bgCol = hovered and Theme.ElementBackgroundHover or Theme.ElementBackground
-		rect("cp.bg" .. idx, x, y, w, h, bgCol, 0.9, 20, 6)
-		outline("cp.bd" .. idx, x, y, w, h, Theme.ElementStroke, 0.4, 21, 6)
-		text("cp.t" .. idx, el.name, x + 12, y + 11, 13, Theme.TextColor, 22)
 		
-		local boxW = 32
-		local boxH = 18
-		local boxX = x + w - boxW - 12
-		local boxY = y + 9
-		local boxHovered = inBounds(boxX, boxY, boxW, boxH)
-		
-		rect("cp.bx" .. idx, boxX, boxY, boxW, boxH, el.value, 1, 22, 3)
-		outline("cp.bxbd" .. idx, boxX, boxY, boxW, boxH, Theme.ElementStroke, 0.5, 23, 3)
-		
-		if clickOk and boxHovered then
-			if State.Overlay and State.Overlay.element == el then
-				State.Overlay = nil
-			else
-				State.Overlay = {
-					type = "ColorPicker",
-					element = el,
-					idx = idx,
-					x = boxX - 100,
-					y = boxY + boxH + 2,
-					w = 132,
-					h = 92,
-				}
+		if needBar then
+			local trackX = ov.x + panelW - barW
+			local thumbH = math.max(16, listH * visN / #opts)
+			local thumbY = listTop + (el.scroll / maxScroll) * (listH - thumbH)
+			rect("ov.sbtk", trackX, listTop, barW, listH, Theme.Background, a * 0.5, Z + 2, 2)
+			rect("ov.sbth", trackX, thumbY, barW, thumbH, Theme.SliderProgress, a, Z + 3, 2)
+			
+			if Input.down and (ov.dragBar or (Input.clicked and inBounds(trackX, listTop, barW, listH))) then
+				ov.dragBar = true
+				local f = clamp((Input.my - listTop - thumbH/2) / (listH - thumbH), 0, 1)
+				el.scroll = math.floor(f * maxScroll + 0.5)
+			elseif not Input.down then
+				ov.dragBar = false
 			end
 		end
+		
+		if Input.clicked and not ov.closing and not inBounds(ov.x, ov.y, panelW, panelH) then
+			ov.closing = true
+		end
+		return true
+		
+	elseif ov.kind == "colorpicker" then
+		local el = ov.el
+		local pad, sv = 8, 100
+		local hueW = 12
+		local panelW = pad * 3 + sv + hueW
+		local panelH = pad * 3 + sv + 22
+		
+		local px = clamp(ov.ax - panelW, State.Win.x + 4, State.Win.x + State.Win.w - panelW - 4)
+		local py = clamp(ov.ay, State.Win.y + 40, State.Win.y + State.Win.h - panelH - 4)
+		
+		local svx, svy = px + pad, py + pad
+		local hx = svx + sv + pad
+		local btnY = svy + sv + pad
+		
+		rect("ov.bg", px, py, panelW, panelH, Theme.Topbar, 0.98, Z, 6)
+		outline("ov.bd", px, py, panelW, panelH, Theme.ElementStroke, 0.5, Z + 1, 6)
+		
+		if Input.down then
+			if Input.clicked and inBounds(svx, svy, sv, sv) then ov.drag = "sv"
+			elseif Input.clicked and inBounds(hx, svy, hueW, sv) then ov.drag = "hue" end
+		else
+			ov.drag = nil
+		end
+		
+		if ov.drag == "sv" then
+			el.s = clamp((Input.mx - svx) / sv, 0, 1)
+			el.v = 1 - clamp((Input.my - svy) / sv, 0, 1)
+		elseif ov.drag == "hue" then
+			el.h = 1 - clamp((Input.my - svy) / sv, 0, 1)
+		end
+		
+		if ov.drag then
+			el.value = Color3.fromHSV(el.h, el.s, el.v)
+			safe(el.callback, el.value)
+			SaveConfiguration()
+		end
+		
+		-- Draw Saturation/Value box
+		local svN = 25
+		local cell = sv / svN
+		local k = 0
+		for gx = 0, svN - 1 do
+			for gy = 0, svN - 1 do
+				k = k + 1
+				rect("ov.sv" .. k, math.floor(svx + gx * cell), math.floor(svy + gy * cell), math.ceil(cell), math.ceil(cell),
+					Color3.fromHSV(el.h, (gx + 0.5) / svN, 1 - (gy + 0.5) / svN), 1, Z + 2, 0)
+			end
+		end
+		
+		-- Draw Hue Bar
+		local hcN = 50
+		local hcell = sv / hcN
+		for i = 0, hcN - 1 do
+			rect("ov.hu" .. i, hx, math.floor(svy + i * hcell), hueW, math.ceil(hcell), Color3.fromHSV(1 - i / hcN, 1, 1), 1, Z + 2, 0)
+		end
+		
+		-- Handles
+		outline("ov.svc", svx + el.s * sv - 3, svy + (1 - el.v) * sv - 3, 6, 6, Color3.fromRGB(255, 255, 255), 1, Z + 3, 0)
+		rect("ov.huc", hx - 2, svy + (1 - el.h) * sv - 1, hueW + 4, 2, Color3.fromRGB(255, 255, 255), 1, Z + 3, 0)
+		
+		-- Done Button
+		local btnW = panelW - pad * 2
+		local doneHov = inBounds(px + pad, btnY, btnW, 20)
+		rect("ov.done", px + pad, btnY, btnW, 20, Theme.TabBackgroundSelected, 0.9, Z + 2, 4)
+		text("ov.donet", "Close", px + pad + btnW/2 - textW("Close", 11)/2, btnY + 4, 11, Theme.SelectedTabTextColor, Z + 3)
+		
+		if doneHov and Input.clicked then
+			State.Overlay = nil
+			return true
+		end
+		
+		if Input.clicked and not ov.drag and not inBounds(px, py, panelW, panelH) then
+			State.Overlay = nil
+		end
+		return true
 	end
+	return false
+end
+
+-- Keyboard action polling
+local function pollKeybinds(ck)
+	if State.KBListening then
+		local el = State.KBListening
+		for _, vk in ipairs(ScanList) do
+			if vk ~= 0x01 and ck(vk) then
+				if vk == 0x1B then -- Escape key
+					State.KBListening = nil
+				elseif vk == 0x2E then -- Delete key to clear
+					el.value = "None"
+					el.key = nil
+					State.KBListening = nil
+					safe(el.callback, "None")
+				else
+					el.key = vk
+					el.value = KeyName[vk] or tostring(vk)
+					State.KBListening = nil
+					safe(el.callback, el.value)
+				end
+				SaveConfiguration()
+				break
+			end
+		end
+		return
+	end
+	
+	-- Fire actions for active keybinds
+	for _, el in ipairs(AllKeybinds) do
+		if el.key and ck(el.key) then
+			safe(el.callback, el.value)
+		end
+	end
+end
+
+-- Text box input action polling
+local function pollTextInput(ck)
+	local f = State.Focused
+	if not f then return end
+	if ck(0x0D) then -- Enter
+		if f.onCommit then f.onCommit(f.buf) end
+		State.Focused = nil
+		return
+	end
+	if ck(0x1B) then -- Escape
+		State.Focused = nil
+		return
+	end
+	
+	local changed = false
+	if ck(0x08) then -- Backspace
+		if #f.buf > 0 then f.buf = f.buf:sub(1, -2); changed = true end
+	end
+	
+	local shift = safeIsKeyPressed(0x10) or safeIsKeyPressed(0xA0) or safeIsKeyPressed(0xA1)
+	for _, vk in ipairs(CharScanList) do
+		if ck(vk) then
+			local m = CharMap[vk]
+			local chr = m and (shift and m[2] or m[1])
+			if chr then
+				f.buf = f.buf .. chr
+				changed = true
+			end
+			break
+		end
+	end
+	
+	if changed and f.onType then
+		f.onType(f.buf)
+	end
+end
+
+local function blurField()
+	local f = State.Focused
+	if f and f.onCommit then f.onCommit(f.buf) end
+	State.Focused = nil
 end
 
 -- Render the Rayfield Loader
@@ -1001,153 +1186,56 @@ local function renderLoader(dt)
 	end
 	
 	-- Panel Background
-	rect("ld.bg", x, y, w, h, Theme.Background, a * 0.98, 200, 8)
-	outline("ld.bd", x, y, w, h, Theme.ElementStroke, a * 0.4, 201, 8)
+	rect("ld.bg", x, y, w, h, Theme.Background, a * 0.98, 100, 8)
+	outline("ld.bd", x, y, w, h, Theme.ElementStroke, a * 0.4, 101, 8)
 	
 	-- Titles
-	text("ld.t", Loader.Title, x + w / 2, y + 55, 20, Theme.TextColor, 202, true, a)
-	text("ld.st", Loader.Subtitle, x + w / 2, y + 85, 12, Color3.fromRGB(150, 150, 150), 202, true, a)
+	text("ld.t", Loader.Title, x + w / 2, y + 55, 20, Theme.TextColor, 102, true, a)
+	text("ld.st", Loader.Subtitle, x + w / 2, y + 85, 12, Color3.fromRGB(150, 150, 150), 102, true, a)
 	
 	-- Progress Bar
 	local pbx, pby, pbw, pbh = x + 35, y + 130, 250, 5
-	rect("ld.pbbg", pbx, pby, pbw, pbh, Color3.fromRGB(45, 45, 45), a * 0.5, 202, 2)
-	rect("ld.pbfil", pbx, pby, math.floor(pbw * Loader.Progress.v), pbh, Theme.SliderProgress, a, 203, 2)
+	rect("ld.pbbg", pbx, pby, pbw, pbh, Color3.fromRGB(45, 45, 45), a * 0.5, 102, 2)
+	rect("ld.pbfil", pbx, pby, math.floor(pbw * Loader.Progress.v), pbh, Theme.SliderProgress, a, 103, 2)
 end
 
--- Render open Dropdown or Colorpicker Overlay lists
-local function renderOverlay()
-	if not State.Overlay then return end
-	local ov = State.Overlay
-	local clickOk = Input.clicked and not InputProcessed
-	
-	if ov.type == "Dropdown" then
-		local el = ov.element
-		rect("ov.bg", ov.x, ov.y, ov.w, ov.h, Theme.NotificationBackground, 0.98, 50, 4)
-		outline("ov.bd", ov.x, ov.y, ov.w, ov.h, Theme.ElementStroke, 0.5, 51, 4)
-		
-		local optY = ov.y + 4
-		for oidx, opt in ipairs(el.options) do
-			if optY + 20 > ov.y + ov.h then break end
-			local optHover = inBounds(ov.x, optY, ov.w, 22)
-			local optSel = (el.value == opt)
-			
-			if optSel then
-				rect("ov.optbg" .. oidx, ov.x + 4, optY, ov.w - 8, 20, Theme.DropdownSelected, 0.9, 52, 4)
-			elseif optHover then
-				rect("ov.optbg" .. oidx, ov.x + 4, optY, ov.w - 8, 20, Theme.ElementBackgroundHover, 0.5, 52, 4)
-			end
-			
-			text("ov.opttx" .. oidx, tostring(opt), ov.x + 10, optY + 3, 11, Theme.TextColor, 53)
-			
-			if optHover and clickOk then
-				el.value = opt
-				if el.flag then Library.Flags[el.flag] = el.value; saveConfig() end
-				task.spawn(el.callback, el.value)
-				State.Overlay = nil
-				InputProcessed = true
-				break
-			end
-			optY = optY + 24
-		end
-	elseif ov.type == "ColorPicker" then
-		local el = ov.element
-		rect("ov.bg", ov.x, ov.y, ov.w, ov.h, Theme.NotificationBackground, 0.98, 50, 4)
-		outline("ov.bd", ov.x, ov.y, ov.w, ov.h, Theme.ElementStroke, 0.5, 51, 4)
-		
-		local h, s, v = Color3.toHSV(el.value)
-		local sy = ov.y + 6
-		
-		local function drawColorSlider(id, label, val, maxVal, displayVal)
-			text("ov.l_" .. id, label, ov.x + 8, sy, 10, Theme.TextColor, 52)
-			text("ov.v_" .. id, displayVal, ov.x + ov.w - 20, sy, 10, Theme.SliderProgress, 52)
-			
-			local trackX = ov.x + 8
-			local trackY = sy + 14
-			local trackW = ov.w - 16
-			local trackH = 4
-			
-			rect("ov.tr_" .. id, trackX, trackY, trackW, trackH, Color3.fromRGB(40, 40, 40), 1, 52, 2)
-			
-			local fillW = math.floor(trackW * (val / maxVal))
-			rect("ov.fi_" .. id, trackX, trackY, fillW, trackH, Theme.SliderProgress, 1, 53, 2)
-			circle("ov.kb_" .. id, trackX + fillW, trackY + 2, 3, Color3.new(1, 1, 1), 1, 54)
-			
-			local hover = inBounds(trackX - 5, trackY - 5, trackW + 10, trackH + 10)
-			if Input.down and (hover or ov["dragging_" .. id]) and not InputProcessed then
-				ov["dragging_" .. id] = true
-				local pct = clamp((Input.mx - trackX) / trackW, 0, 1)
-				return pct * maxVal
-			end
-			if not Input.down then
-				ov["dragging_" .. id] = nil
-			end
-			return val
-		end
-		
-		local newH = drawColorSlider("h", "H", h * 360, 360, string.format("%d", h * 360))
-		sy = sy + 24
-		local newS = drawColorSlider("s", "S", s * 100, 100, string.format("%d%%", s * 100))
-		sy = sy + 24
-		local newV = drawColorSlider("v", "V", v * 100, 100, string.format("%d%%", v * 100))
-		
-		local updatedColor = Color3.fromHSV(newH / 360, newS / 100, newV / 100)
-		if updatedColor.R ~= el.value.R or updatedColor.G ~= el.value.G or updatedColor.B ~= el.value.B then
-			el.value = updatedColor
-			if el.flag then Library.Flags[el.flag] = el.value; saveConfig() end
-			task.spawn(el.callback, el.value)
-		end
-	end
-end
-
--- Render the Main Rayfield Window Frame and Tabs
+-- Render the Main Rayfield Window Frame, Scrollbar, and Tabs
 local function renderWindow(dt)
 	local win = State.Win
 	local topBarH = 40
 	local sideBarW = 140
-	local clickOk = Input.clicked and not InputProcessed
 	
 	handleDragging()
 	
-	-- Base Windows Background
+	-- Base Window Background
 	rect("win.bg", win.x, win.y, win.w, win.h, Theme.Background, 0.98, 10, 8)
 	outline("win.bd", win.x, win.y, win.w, win.h, Theme.ElementStroke, 0.35, 11, 8)
 	
-	-- Draw sidebar background cover
-	rect("win.sbcov", win.x + 1, win.y + topBarH + 1, sideBarW - 1, win.h - topBarH - 2, Theme.Background, 0.98, 24, 0)
-	
-	-- Draw Topbar cover panel
-	rect("win.tbcov", win.x + 1, win.y + 1, win.w - 2, topBarH - 1, Theme.Topbar, 0.98, 25, 0)
-	
-	-- Draw Bottom cover panel (scrolled elements occlusion)
-	rect("win.bbcov", win.x + 1, win.y + win.h - 10, win.w - 2, 9, Theme.Background, 0.98, 25, 0)
-	
 	-- Topbar separator
-	line("win.tbl", win.x, win.y + topBarH, win.x + win.w, win.y + topBarH, Theme.SecondaryElementStroke, 0.5, 26)
+	line("win.tbl", win.x, win.y + topBarH, win.x + win.w, win.y + topBarH, Theme.SecondaryElementStroke, 0.5, 12)
 	
 	-- Sidebar right separator
-	line("win.sbl", win.x + sideBarW, win.y + topBarH, win.x + sideBarW, win.y + win.h, Theme.SecondaryElementStroke, 0.5, 26)
+	line("win.sbl", win.x + sideBarW, win.y + topBarH, win.x + sideBarW, win.y + win.h, Theme.SecondaryElementStroke, 0.5, 12)
 	
 	-- Window Title
-	text("win.t", Loader.Title, win.x + 15, win.y + 12, 14, Theme.TextColor, 27, false)
+	text("win.t", Loader.Title, win.x + 15, win.y + 12, 14, Theme.TextColor, 12, false)
 	
 	-- Topbar Action Buttons (Close and Minimize)
 	local closeX = win.x + win.w - 30
 	local closeY = win.y + 13
 	local closeHov = inBounds(closeX, closeY, 15, 15)
-	text("win.close", "x", closeX, closeY, 13, closeHov and Color3.fromRGB(255, 80, 80) or Theme.TextColor, 27)
-	if closeHov and clickOk then
+	text("win.close", "x", closeX, closeY, 13, closeHov and Color3.fromRGB(255, 80, 80) or Theme.TextColor, 13)
+	if closeHov and Input.clicked then
 		Library:Destroy()
-		InputProcessed = true
 		return
 	end
 	
 	local minX = win.x + win.w - 55
 	local minY = win.y + 11
 	local minHov = inBounds(minX, minY, 15, 15)
-	text("win.min", "-", minX, minY, 15, minHov and Theme.SliderStroke or Theme.TextColor, 27)
-	if minHov and clickOk then
+	text("win.min", "-", minX, minY, 15, minHov and Theme.SliderStroke or Theme.TextColor, 13)
+	if minHov and Input.clicked then
 		State.Minimized = true
-		InputProcessed = true
 	end
 	
 	-- Draw Tabs Sidebar
@@ -1159,102 +1247,84 @@ local function renderWindow(dt)
 		
 		-- Tab highlight background
 		if active then
-			rect("tab.bg" .. i, win.x + 10, ty, sideBarW - 20, 28, Theme.TabBackgroundSelected, 0.9, 27, 6)
-			outline("tab.bd" .. i, win.x + 10, ty, sideBarW - 20, 28, Theme.TabStroke, 0.2, 28, 6)
+			rect("tab.bg" .. i, win.x + 10, ty, sideBarW - 20, 28, Theme.TabBackgroundSelected, 0.98, 13, 6)
+			outline("tab.bd" .. i, win.x + 10, ty, sideBarW - 20, 28, Theme.TabStroke, 0.15, 14, 6)
 		elseif tHover then
-			rect("tab.bg" .. i, win.x + 10, ty, sideBarW - 20, 28, Theme.ElementBackgroundHover, 0.15, 27, 6)
+			rect("tab.bg" .. i, win.x + 10, ty, sideBarW - 20, 28, Theme.ElementBackgroundHover, 0.25, 13, 6)
 		end
 		
 		-- Tab Text
-		text("tab.tx" .. i, tabObj.name, win.x + 20, ty + 7, 13, active and Theme.SelectedTabTextColor or Theme.TabTextColor, 29, false, 1, not active)
+		text("tab.tx" .. i, tabObj.name, win.x + 20, ty + 7, 13, active and Theme.SelectedTabTextColor or Theme.TabTextColor, 15, false, 1, not active)
 		
-		if tHover and clickOk then
+		if tHover and Input.clicked then
 			State.ActiveTab = i
-			InputProcessed = true
+			blurField()
+			State.Overlay = nil
 		end
 	end
 	
-	-- Draw Active Tab Content (Scrollbar Layout)
+	-- Draw Elements Container with Scrollbar
+	local containerX = win.x + sideBarW + 12
+	local containerY = win.y + topBarH + 12
+	local containerW = win.w - sideBarW - 24
+	local containerH = win.h - topBarH - 24
+	
 	local activeTabObj = Tabs[State.ActiveTab]
 	if activeTabObj then
-		local contentX = win.x + sideBarW + 10
-		local contentY = win.y + topBarH + 10
-		local contentW = win.w - sideBarW - 20
-		local contentH = win.h - topBarH - 20
-		
-		-- Clear drawings for inactive tabs
-		for tIdx, tabObj in ipairs(Tabs) do
-			if tIdx ~= State.ActiveTab then
-				for elIdx, el in ipairs(tabObj.elements) do
-					hideElementDrawings(el, elIdx)
-				end
-			end
-		end
-		
-		-- Calculate total height
 		local totalHeight = 0
 		local spacing = 8
 		for _, el in ipairs(activeTabObj.elements) do
-			totalHeight = totalHeight + getElementHeight(el) + spacing
+			el.height = cardHeight(el)
+			totalHeight = totalHeight + el.height + spacing
 		end
 		if totalHeight > 0 then totalHeight = totalHeight - spacing end
 		
-		local maxScroll = math.max(0, totalHeight - contentH)
-		activeTabObj.scrollOffset = activeTabObj.scrollOffset or 0
-		activeTabObj.scrollSpring = activeTabObj.scrollSpring or newSpring(0, 16)
-		activeTabObj.scrollSpring.goal = activeTabObj.scrollOffset
-		springStep(activeTabObj.scrollSpring, dt)
+		local maxScroll = math.max(0, totalHeight - containerH)
+		activeTabObj.scroll = clamp(activeTabObj.scroll or 0, 0, maxScroll)
 		
-		local currentScroll = activeTabObj.scrollSpring.v
+		local needScrollbar = maxScroll > 0
+		local trackW = 4
+		local trackX = win.x + win.w - 10
+		local trackY = containerY
+		local trackH = containerH
 		
-		-- Draw elements
-		local elW = contentW - 14
-		local currentY = contentY - currentScroll
-		for idx, el in ipairs(activeTabObj.elements) do
-			local elH = getElementHeight(el)
+		-- Overlay blocker
+		local block = (State.Overlay ~= nil)
+		
+		if needScrollbar then
+			local thumbH = math.max(16, (trackH / totalHeight) * trackH)
+			local maxThumbY = trackH - thumbH
+			local trackHovered = inBounds(trackX - 4, trackY, trackW + 8, trackH)
 			
-			local visible = (currentY + elH >= contentY) and (currentY <= contentY + contentH)
-			if visible then
-				renderElement(el, contentX, currentY, elW, elH, idx, dt)
+			rect("win.sptrack", trackX, trackY, trackW, trackH, Color3.fromRGB(45, 45, 45), 0.3, 20, 2)
+			
+			if Input.down and not block then
+				if not State.ScrollDrag and trackHovered then
+					State.ScrollDrag = true
+				end
+				if State.ScrollDrag then
+					local f = clamp((Input.my - trackY - thumbH/2) / maxThumbY, 0, 1)
+					activeTabObj.scroll = f * maxScroll
+				end
 			else
-				hideElementDrawings(el, idx)
+				State.ScrollDrag = false
 			end
 			
-			currentY = currentY + elH + spacing
+			local thumbY = trackY + (activeTabObj.scroll / maxScroll) * maxThumbY
+			rect("win.spthumb", trackX, thumbY, trackW, thumbH, Theme.SliderProgress, 0.8, 21, 2)
 		end
 		
-		-- Draw Scrollbar track & thumb
-		if totalHeight > contentH then
-			local sbX = win.x + win.w - 10
-			local sbY = contentY
-			local sbW = 4
-			local sbH = contentH
+		-- Render elements within viewport boundaries (dynamic clipping)
+		local accY = 0
+		for idx, el in ipairs(activeTabObj.elements) do
+			local elY = containerY + accY - activeTabObj.scroll
+			local isVisible = (elY + el.height > containerY) and (elY < containerY + containerH)
+			local idp = "el_" .. State.ActiveTab .. "_" .. idx
 			
-			rect("sb.tr", sbX, sbY, sbW, sbH, Color3.fromRGB(35, 35, 35), 0.5, 24, 2)
-			
-			local thumbH = math.max(20, math.floor(sbH * (sbH / totalHeight)))
-			local thumbY = sbY + (activeTabObj.scrollOffset / maxScroll) * (sbH - thumbH)
-			
-			local thumbHover = inBounds(sbX - 4, thumbY, sbW + 8, thumbH)
-			if Input.down and (thumbHover or State.Scrolling) and not InputProcessed then
-				if Input.clicked then State.Scrolling = true end
+			if isVisible then
+				processEl(el, idp, containerX, elY, containerW - (needScrollbar and 10 or 0), el.height, dt, 20, block)
 			end
-			if not Input.down then State.Scrolling = false end
-			
-			if State.Scrolling then
-				local relY = Input.my - sbY - thumbH / 2
-				local pct = clamp(relY / (sbH - thumbH), 0, 1)
-				activeTabObj.scrollOffset = pct * maxScroll
-				activeTabObj.scrollSpring.v = activeTabObj.scrollOffset
-			end
-			
-			rect("sb.th", sbX, thumbY, sbW, thumbH, Theme.SliderProgress, 0.9, 25, 2)
-		else
-			-- Hide scrollbar drawings
-			local sbC = Cache["sb.tr"]
-			if sbC then sbC.Obj.Visible = false; sbC.P.Visible = false end
-			local sbTh = Cache["sb.th"]
-			if sbTh then sbTh.Obj.Visible = false; sbTh.P.Visible = false end
+			accY = accY + el.height + spacing
 		end
 	end
 end
@@ -1268,9 +1338,8 @@ local function renderMinimizedBubble()
 	outline("bub.bd", x, y, w, h, hovered and Theme.SliderStroke or Theme.ElementStroke, 0.4, 91, 8)
 	circle("bub.dot", x + 15, y + 16, 4, Theme.SliderProgress, 1, 92)
 	text("bub.tx", Loader.Title, x + 28, y + 9, 13, Theme.TextColor, 92)
-	if hovered and Input.clicked and not InputProcessed then
+	if hovered and Input.clicked then
 		State.Minimized = false
-		InputProcessed = true
 	end
 end
 
@@ -1313,12 +1382,11 @@ local function renderNotifs(dt)
 			-- Close Action
 			local cx, cy = x + w - 22, y + 9
 			text("nf.x" .. n.id, "x", cx, cy, 13, Color3.fromRGB(150, 150, 150), Z + 3, false, a)
-			if not n.dying and Input.clicked and inBounds(cx - 4, cy - 2, 16, 16) and not InputProcessed then
+			if not n.dying and Input.clicked and inBounds(cx - 4, cy - 2, 16, 16) then
 				n.dying = true
 				n.diedAt = now
 				n.slide.goal = 1
 				n.alpha.goal = 0
-				InputProcessed = true
 			end
 			
 			-- Content Lines
@@ -1343,67 +1411,6 @@ function clamp(v, lo, hi)
 	if v < lo then return lo elseif v > hi then return hi end return v
 end
 
--- Global input captures
-if UserInputService and UserInputService.InputChanged then
-	pcall(function()
-		UserInputService.InputChanged:Connect(function(input, gp)
-			if input.UserInputType == Enum.UserInputType.MouseWheel then
-				local activeTabObj = Tabs[State.ActiveTab]
-				if activeTabObj then
-					local contentX = State.Win.x + 140 + 10
-					local contentY = State.Win.y + 40 + 10
-					local contentW = State.Win.w - 140 - 20
-					local contentH = State.Win.h - 40 - 20
-					
-					if inBounds(contentX, contentY, contentW, contentH) then
-						local totalHeight = 0
-						local spacing = 8
-						for _, el in ipairs(activeTabObj.elements) do
-							totalHeight = totalHeight + getElementHeight(el) + spacing
-						end
-						if totalHeight > 0 then totalHeight = totalHeight - spacing end
-						local maxScroll = math.max(0, totalHeight - contentH)
-						
-						local delta = input.Position.Z
-						activeTabObj.scrollOffset = clamp(activeTabObj.scrollOffset - delta * 24, 0, maxScroll)
-					end
-				end
-			end
-		end)
-	end)
-end
-
-if UserInputService and UserInputService.InputBegan then
-	pcall(function()
-		UserInputService.InputBegan:Connect(function(input, gp)
-			if not FocusedInput then return end
-			if input.UserInputType == Enum.UserInputType.Keyboard then
-				local kc = input.KeyCode
-				if kc == Enum.KeyCode.Return then
-					FocusedInput.callback(FocusedInput.value)
-					FocusedInput = nil
-				elseif kc == Enum.KeyCode.Backspace then
-					FocusedInput.value = string.sub(FocusedInput.value, 1, -2)
-					task.spawn(FocusedInput.callback, FocusedInput.value)
-				elseif kc == Enum.KeyCode.Space then
-					FocusedInput.value = FocusedInput.value .. " "
-					task.spawn(FocusedInput.callback, FocusedInput.value)
-				else
-					local char = KeyMap[kc]
-					if char then
-						local shift = safeIsKeyPressed(0x10) or safeIsKeyPressed(0xA0) or safeIsKeyPressed(0xA1)
-						if shift then
-							char = ShiftMap[char] or char
-						end
-						FocusedInput.value = FocusedInput.value .. char
-						task.spawn(FocusedInput.callback, FocusedInput.value)
-					end
-				end
-			end
-		end)
-	end)
-end
-
 -- The core frame-by-frame loop step
 local function step()
 	local active = true
@@ -1414,7 +1421,6 @@ local function step()
 	end)
 	if not active then return end
 	CurTick = CurTick + 1
-	InputProcessed = false
 	
 	local now = tick()
 	local dt = State.LastTime and (now - State.LastTime) or 0.016
@@ -1423,20 +1429,8 @@ local function step()
 	
 	pollInput()
 	
-	-- Close overlay if clicked outside
-	if State.Overlay and Input.clicked then
-		local ov = State.Overlay
-		if not inBounds(ov.x, ov.y, ov.w, ov.h) then
-			State.Overlay = nil
-			InputProcessed = true
-		else
-			InputProcessed = true
-		end
-	end
-	
 	local clicks = {}
 	local function ck(vk)
-		if not vk or vk <= 0 or vk > 255 then return false end
 		local c = clicks[vk]
 		if c == nil then c = keyEdge(vk); clicks[vk] = c end
 		return c
@@ -1445,7 +1439,12 @@ local function step()
 	-- Toggle visibility key
 	if ck(State.ToggleKey) then
 		State.Minimized = not State.Minimized
+		blurField()
+		State.Overlay = nil
 	end
+	
+	pollKeybinds(ck)
+	pollTextInput(ck)
 	
 	if #Notifs > 0 or Loader.Active then
 		State.Vw, State.Vh = getViewportSize()
@@ -1457,7 +1456,7 @@ local function step()
 		renderMinimizedBubble()
 	else
 		renderWindow(dt)
-		renderOverlay()
+		renderOverlay(dt)
 	end
 	
 	renderNotifs(dt)
@@ -1482,14 +1481,6 @@ function Library:CreateWindow(Settings)
 	Loader.Alpha.goal = 1
 	Loader.Active = true
 	
-	-- Setup config mapping
-	if Settings.ConfigurationSaving and Settings.ConfigurationSaving.Enabled then
-		currentConfig.Enabled = true
-		currentConfig.Folder = Settings.ConfigurationSaving.FolderName or "Rayfield"
-		currentConfig.File = Settings.ConfigurationSaving.FileName or "config"
-		loadConfig()
-	end
-	
 	-- Setup config theme
 	if Settings.Theme then
 		local newTheme = Library.Theme[Settings.Theme]
@@ -1499,12 +1490,24 @@ function Library:CreateWindow(Settings)
 	end
 	
 	if Settings.ToggleUIKeybind then
-		if type(Settings.ToggleUIKeybind) == "string" then
-			local name = Settings.ToggleUIKeybind:upper()
-			local vk = getVKFromName(name)
-			if vk then
-				State.ToggleKey = vk
-			end
+		local key, name = resolveKey(Settings.ToggleUIKeybind)
+		if key then
+			State.ToggleKey = key
+		end
+	end
+	
+	-- Configuration Saving
+	if Settings.ConfigurationSaving then
+		CEnabled = Settings.ConfigurationSaving.Enabled
+		CFileName = Settings.ConfigurationSaving.FileName or tostring(game.PlaceId)
+		ConfigurationFolder = Settings.ConfigurationSaving.FolderName or ConfigurationFolder
+		
+		if CEnabled then
+			pcall(function()
+				if not isfolder(ConfigurationFolder) then
+					makefolder(ConfigurationFolder)
+				end
+			end)
 		end
 	end
 	
@@ -1540,290 +1543,315 @@ function Library:CreateWindow(Settings)
 			name = Name or "Tab",
 			icon = Icon,
 			elements = {},
-			scrollOffset = 0,
+			scroll = 0,
 		}
 		table.insert(Tabs, tabObj)
 		
-		-- SECTION CONSTRUCTOR
-		function tabObj:CreateSection(secName)
-			local el = { type = "Section", name = secName or "Section" }
+		-- Element Creation API on individual Tab
+		local tabAPI = {}
+		
+		function tabAPI:CreateSection(text)
+			local el = { kind = "section", title = text }
 			table.insert(tabObj.elements, el)
 			return el
 		end
 		
-		-- DIVIDER CONSTRUCTOR
-		function tabObj:CreateDivider()
-			local el = { type = "Divider" }
+		function tabAPI:CreateDivider()
+			local el = { kind = "divider" }
 			table.insert(tabObj.elements, el)
 			return el
 		end
 		
-		-- LABEL CONSTRUCTOR
-		function tabObj:CreateLabel(lblText)
-			local el = { type = "Label", name = lblText or "Label" }
+		function tabAPI:CreateLabel(text, icon, color, ignoreTheme)
+			local el = { kind = "label", title = text, icon = icon, color = color }
 			table.insert(tabObj.elements, el)
 			return el
 		end
 		
-		-- PARAGRAPH CONSTRUCTOR
-		function tabObj:CreateParagraph(cfg)
-			cfg = cfg or {}
+		function tabAPI:CreateParagraph(c)
+			c = c or {}
 			local lines = {}
-			for ln in (tostring(cfg.Content or "") .. "\n"):gmatch("(.-)\n") do
+			for ln in (tostring(c.Content or "") .. "\n"):gmatch("(.-)\n") do
 				table.insert(lines, ln)
 			end
 			if #lines > 0 and lines[#lines] == "" then table.remove(lines) end
 			
-			local el = {
-				type = "Paragraph",
-				name = cfg.Title or "Paragraph",
-				content = cfg.Content or "",
-				lines = lines,
-			}
-			table.insert(tabObj.elements, el)
-			return el
-		end
-		
-		-- BUTTON CONSTRUCTOR
-		function tabObj:CreateButton(cfg)
-			cfg = cfg or {}
-			local el = {
-				type = "Button",
-				name = cfg.Name or "Button",
-				callback = cfg.Callback or function() end,
-			}
-			table.insert(tabObj.elements, el)
+			local el = { kind = "paragraph", title = c.Title or "Paragraph", value = c.Content or "", lines = lines }
 			
-			local buttonObj = {}
-			function buttonObj:Set(newName)
-				el.name = newName
-			end
-			return buttonObj
-		end
-		
-		-- TOGGLE CONSTRUCTOR
-		function tabObj:CreateToggle(cfg)
-			cfg = cfg or {}
-			local Flag = cfg.Flag
-			local defaultVal = cfg.CurrentValue or false
-			if Flag and Library.Flags[Flag] ~= nil then
-				defaultVal = Library.Flags[Flag]
-			elseif Flag then
-				Library.Flags[Flag] = defaultVal
-			end
-			
-			local el = {
-				type = "Toggle",
-				name = cfg.Name or "Toggle",
-				value = defaultVal,
-				callback = cfg.Callback or function() end,
-				flag = Flag,
-			}
-			table.insert(tabObj.elements, el)
-			
-			local toggleObj = {}
-			function toggleObj:Set(newVal)
-				el.value = not not newVal
-				if Flag then Library.Flags[Flag] = el.value; saveConfig() end
-				task.spawn(el.callback, el.value)
-			end
-			function toggleObj:Get()
-				return el.value
-			end
-			return toggleObj
-		end
-		
-		-- SLIDER CONSTRUCTOR
-		function tabObj:CreateSlider(cfg)
-			cfg = cfg or {}
-			local range = cfg.Range or { 0, 100 }
-			local min = range[1] or 0
-			local max = range[2] or 100
-			local Flag = cfg.Flag
-			local defaultVal = cfg.CurrentValue or min
-			if Flag and Library.Flags[Flag] ~= nil then
-				defaultVal = Library.Flags[Flag]
-			elseif Flag then
-				Library.Flags[Flag] = defaultVal
-			end
-			
-			local el = {
-				type = "Slider",
-				name = cfg.Name or "Slider",
-				min = min,
-				max = max,
-				increment = cfg.Increment or 1,
-				suffix = cfg.Suffix or "",
-				value = defaultVal,
-				callback = cfg.Callback or function() end,
-				flag = Flag,
-				dragging = false,
-			}
-			table.insert(tabObj.elements, el)
-			
-			local sliderObj = {}
-			function sliderObj:Set(newVal)
-				newVal = clamp(newVal, min, max)
-				el.value = newVal
-				if Flag then Library.Flags[Flag] = el.value; saveConfig() end
-				task.spawn(el.callback, el.value)
-			end
-			function sliderObj:Get()
-				return el.value
-			end
-			return sliderObj
-		end
-		
-		-- INPUT CONSTRUCTOR
-		function tabObj:CreateInput(cfg)
-			cfg = cfg or {}
-			local Flag = cfg.Flag
-			local defaultVal = cfg.CurrentValue or ""
-			if Flag and Library.Flags[Flag] ~= nil then
-				defaultVal = Library.Flags[Flag]
-			elseif Flag then
-				Library.Flags[Flag] = defaultVal
-			end
-			
-			local el = {
-				type = "Input",
-				name = cfg.Name or "Input",
-				placeholder = cfg.PlaceholderText or "Type here...",
-				value = defaultVal,
-				callback = cfg.Callback or function() end,
-				flag = Flag,
-			}
-			table.insert(tabObj.elements, el)
-			
-			local inputObj = {}
-			function inputObj:Set(newVal)
-				el.value = tostring(newVal)
-				if Flag then Library.Flags[Flag] = el.value; saveConfig() end
-				task.spawn(el.callback, el.value)
-			end
-			function inputObj:Get()
-				return el.value
-			end
-			return inputObj
-		end
-		
-		-- DROPDOWN CONSTRUCTOR
-		function tabObj:CreateDropdown(cfg)
-			cfg = cfg or {}
-			local options = cfg.Options or {}
-			local Flag = cfg.Flag
-			local defaultVal = cfg.CurrentOption or options[1] or ""
-			if Flag and Library.Flags[Flag] ~= nil then
-				defaultVal = Library.Flags[Flag]
-			elseif Flag then
-				Library.Flags[Flag] = defaultVal
-			end
-			
-			local el = {
-				type = "Dropdown",
-				name = cfg.Name or "Dropdown",
-				options = options,
-				value = defaultVal,
-				callback = cfg.Callback or function() end,
-				flag = Flag,
-			}
-			table.insert(tabObj.elements, el)
-			
-			local dropdownObj = {}
-			function dropdownObj:Set(newVal)
-				el.value = newVal
-				if Flag then Library.Flags[Flag] = el.value; saveConfig() end
-				task.spawn(el.callback, el.value)
-			end
-			function dropdownObj:Refresh(newOptions, newVal)
-				el.options = newOptions or {}
-				if newVal then
-					el.value = newVal
+			local handle = {}
+			function handle:Set(newCfg)
+				if type(newCfg) == "table" then
+					el.title = newCfg.Title or el.title
+					el.value = newCfg.Content or el.value
 				else
-					el.value = el.options[1] or ""
+					el.value = tostring(newCfg)
 				end
-				if Flag then Library.Flags[Flag] = el.value; saveConfig() end
-				task.spawn(el.callback, el.value)
+				local newLines = {}
+				for ln in (tostring(el.value) .. "\n"):gmatch("(.-)\n") do
+					table.insert(newLines, ln)
+				end
+				if #newLines > 0 and newLines[#newLines] == "" then table.remove(newLines) end
+				el.lines = newLines
 			end
-			function dropdownObj:Get()
-				return el.value
-			end
-			return dropdownObj
+			
+			table.insert(tabObj.elements, el)
+			return handle
 		end
 		
-		-- KEYBIND CONSTRUCTOR
-		function tabObj:CreateKeybind(cfg)
-			cfg = cfg or {}
-			local Flag = cfg.Flag
-			local defaultVal = cfg.CurrentKeybind or "None"
-			if Flag and Library.Flags[Flag] ~= nil then
-				defaultVal = Library.Flags[Flag]
-			elseif Flag then
-				Library.Flags[Flag] = defaultVal
+		function tabAPI:CreateButton(c)
+			c = c or {}
+			local el = { kind = "button", title = c.Name or "Button", callback = c.Callback, hover = newSpring(0, 16) }
+			
+			local handle = {}
+			function handle:Set(newName)
+				el.title = newName
 			end
 			
-			local el = {
-				type = "Keybind",
-				name = cfg.Name or "Keybind",
-				value = defaultVal,
-				callback = cfg.Callback or function() end,
-				flag = Flag,
-				binding = false,
-			}
 			table.insert(tabObj.elements, el)
+			return handle
+		end
+		
+		function tabAPI:CreateToggle(c)
+			c = c or {}
+			local el = {
+				kind = "toggle",
+				title = c.Name or "Toggle",
+				value = c.CurrentValue and true or false,
+				callback = c.Callback,
+				flag = c.Flag,
+				hover = newSpring(0, 16),
+				anim = newSpring(c.CurrentValue and 1 or 0, 18),
+			}
 			
-			local keybindObj = {}
-			function keybindObj:Set(newVal)
+			local handle = {}
+			function handle:Set(newVal)
+				el.value = not not newVal
+				el.anim.goal = el.value and 1 or 0
+				safe(el.callback, el.value)
+				SaveConfiguration()
+			end
+			
+			if c.Flag then
+				Library.Flags[c.Flag] = handle
+			end
+			
+			table.insert(tabObj.elements, el)
+			return handle
+		end
+		
+		function tabAPI:CreateSlider(c)
+			c = c or {}
+			local range = c.Range or {0, 100}
+			local val = clamp(c.CurrentValue or range[1], range[1], range[2])
+			local el = {
+				kind = "slider",
+				title = c.Name or "Slider",
+				min = range[1],
+				max = range[2],
+				value = val,
+				increment = c.Increment or 1,
+				suffix = c.Suffix,
+				callback = c.Callback,
+				flag = c.Flag,
+				hover = newSpring(0, 16),
+				frac = newSpring((val - range[1]) / math.max(1e-6, range[2] - range[1]), 20),
+			}
+			
+			local handle = {}
+			function handle:Set(newVal)
+				el.value = clamp(newVal, el.min, el.max)
+				el.frac.goal = (el.value - el.min) / math.max(1e-6, el.max - el.min)
+				safe(el.callback, el.value)
+				SaveConfiguration()
+			end
+			
+			if c.Flag then
+				Library.Flags[c.Flag] = handle
+			end
+			
+			table.insert(tabObj.elements, el)
+			return handle
+		end
+		
+		function tabAPI:CreateInput(c)
+			c = c or {}
+			local el = {
+				kind = "input",
+				title = c.Name or "Input",
+				value = c.CurrentValue or "",
+				placeholder = c.PlaceholderText or "Type...",
+				clearOnFocusLost = c.RemoveTextAfterFocusLost or false,
+				callback = c.Callback,
+				flag = c.Flag,
+				hover = newSpring(0, 16),
+			}
+			
+			local handle = {}
+			function handle:Set(newVal)
 				el.value = tostring(newVal)
-				if Flag then Library.Flags[Flag] = el.value; saveConfig() end
-				task.spawn(el.callback, el.value)
+				safe(el.callback, el.value)
+				SaveConfiguration()
 			end
-			function keybindObj:GetState()
-				if not el.value or el.value == "None" then return false end
-				local vk = getVKFromName(el.value)
-				return safeIsKeyPressed(vk)
+			
+			if c.Flag then
+				Library.Flags[c.Flag] = handle
 			end
-			return keybindObj
+			
+			table.insert(tabObj.elements, el)
+			return handle
 		end
 		
-		-- COLORPICKER CONSTRUCTOR
-		function tabObj:CreateColorPicker(cfg)
-			cfg = cfg or {}
-			local Flag = cfg.Flag
-			local defaultVal = cfg.Color or Color3.fromRGB(255, 255, 255)
-			if Flag and Library.Flags[Flag] ~= nil then
-				defaultVal = Library.Flags[Flag]
-			elseif Flag then
-				Library.Flags[Flag] = defaultVal
-			end
-			
+		function tabAPI:CreateDropdown(c)
+			c = c or {}
 			local el = {
-				type = "ColorPicker",
-				name = cfg.Name or "Color Picker",
-				value = defaultVal,
-				callback = cfg.Callback or function() end,
-				flag = Flag,
+				kind = "dropdown",
+				title = c.Name or "Dropdown",
+				options = c.Options or {"Option 1"},
+				value = c.CurrentValue or c.CurrentOption or c.Options[1] or "Option 1",
+				multi = c.MultipleOptions or false,
+				callback = c.Callback,
+				flag = c.Flag,
+				hover = newSpring(0, 16),
+				selectedMap = {},
+				scroll = 0,
 			}
-			table.insert(tabObj.elements, el)
 			
-			local colorpickerObj = {}
-			function colorpickerObj:Set(newVal)
-				if typeof(newVal) == "Color3" then
-					el.value = newVal
-					if Flag then Library.Flags[Flag] = el.value; saveConfig() end
-					task.spawn(el.callback, el.value)
+			if el.multi then
+				local initVal = c.CurrentValue or c.CurrentOption
+				if type(initVal) == "table" then
+					for _, v in ipairs(initVal) do el.selectedMap[v] = true end
+				elseif type(initVal) == "string" then
+					el.selectedMap[initVal] = true
 				end
 			end
-			function colorpickerObj:Get()
-				return el.value
+			
+			local handle = {}
+			function handle:Set(newVal)
+				if el.multi then
+					el.selectedMap = {}
+					if type(newVal) == "table" then
+						for _, v in ipairs(newVal) do el.selectedMap[v] = true end
+					elseif type(newVal) == "string" then
+						el.selectedMap[newVal] = true
+					end
+					safe(el.callback, el.selectedMap)
+				else
+					el.value = tostring(newVal)
+					safe(el.callback, el.value)
+				end
+				SaveConfiguration()
 			end
-			return colorpickerObj
+			
+			function handle:Refresh(optionsTable, resetValue)
+				el.options = optionsTable or el.options
+				el.scroll = 0
+				if resetValue then
+					if el.multi then
+						el.selectedMap = {}
+					else
+						el.value = el.options[1] or "None"
+					end
+				end
+			end
+			
+			if c.Flag then
+				Library.Flags[c.Flag] = handle
+			end
+			
+			table.insert(tabObj.elements, el)
+			return handle
 		end
 		
-		return tabObj
+		function tabAPI:CreateKeybind(c)
+			c = c or {}
+			local key, name = resolveKey(c.CurrentValue or c.CurrentKeybind)
+			local el = {
+				kind = "keybind",
+				title = c.Name or "Keybind",
+				key = key,
+				value = name,
+				callback = c.Callback,
+				flag = c.Flag,
+				hover = newSpring(0, 16),
+			}
+			
+			local handle = {}
+			function handle:Set(newVal)
+				local k, n = resolveKey(newVal)
+				if k then
+					el.key = k
+					el.value = n
+					safe(el.callback, el.value)
+					SaveConfiguration()
+				end
+			end
+			
+			if c.Flag then
+				Library.Flags[c.Flag] = handle
+			end
+			
+			table.insert(AllKeybinds, el)
+			table.insert(tabObj.elements, el)
+			return handle
+		end
+		
+		function tabAPI:CreateColorPicker(c)
+			c = c or {}
+			local color = c.CurrentValue or c.Color or Color3.fromRGB(255, 255, 255)
+			local h, s, v = rgbToHsv(color)
+			local el = {
+				kind = "colorpicker",
+				title = c.Name or "Color Picker",
+				value = color,
+				h = h, s = s, v = v,
+				callback = c.Callback,
+				flag = c.Flag,
+				hover = newSpring(0, 16),
+			}
+			
+			local handle = {}
+			function handle:Set(newCol)
+				if typeof(newCol) == "Color3" then
+					el.value = newCol
+					el.h, el.s, el.v = rgbToHsv(newCol)
+					safe(el.callback, el.value)
+					SaveConfiguration()
+				end
+			end
+			
+			if c.Flag then
+				Library.Flags[c.Flag] = handle
+			end
+			
+			table.insert(tabObj.elements, el)
+			return handle
+		end
+		
+		return tabAPI
 	end
 	
+	-- Delayed config load
+	task.spawn(function()
+		task.wait(1.5) -- wait for loader splash
+		Library:LoadConfiguration()
+	end)
+	
 	return Window
+end
+
+-- RGB to HSV Conversion Utility
+function rgbToHsv(c)
+	local r, g, b = c.R, c.G, c.B
+	local mx, mn = math.max(r, g, b), math.min(r, g, b)
+	local d = mx - mn
+	local h, s, v = 0, (mx == 0 and 0 or d / mx), mx
+	if d ~= 0 then
+		if mx == r then h = ((g - b) / d) % 6
+		elseif mx == g then h = (b - r) / d + 2
+		else h = (r - g) / d + 4 end
+		h = h / 6
+	end
+	return h, s, v
 end
 
 -- Close / remove all cached drawings
@@ -1835,16 +1863,6 @@ function Library:_removeAllDrawings()
 	end
 	Cache = {}
 	Visible = {}
-end
-
--- Set Visibility (compat for Rayfield API)
-function Library:SetVisibility(visible)
-	State.Minimized = not visible
-end
-
--- Is Visible (compat for Rayfield API)
-function Library:IsVisible()
-	return not State.Minimized
 end
 
 -- Destroy Library
